@@ -1,15 +1,29 @@
+<p align="center">
+  <img src="public/icons/tinydo-logo-dark.svg" width="80" height="80" alt="TinyDo Logo" />
+</p>
 
+<h1 align="center">TinyDo</h1>
 
-# TinyDo
+<p align="center">
+  A lightweight, elegant desktop to-do app built with Tauri v2 + React + TypeScript.
+</p>
 
-A lightweight, elegant desktop to-do app built with Tauri v2 + React + TypeScript.
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" />
+  <img alt="Tauri v2" src="https://img.shields.io/badge/Tauri-v2-24C8D8?style=flat-square&logo=tauri&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?style=flat-square&logo=typescript&logoColor=white" />
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" />
+</p>
 
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-
-[简体中文](README.zh-CN.md)
-
-<img width="3399" height="2489" alt="poster" src="https://github.com/user-attachments/assets/d854419e-4fe7-4c4b-8fdd-ccefd61c5ff0" />
-
+<p align="center">
+  <img src="public/poster.png" width="720" alt="TinyDo 截图" />
+</p>
 
 ---
 
