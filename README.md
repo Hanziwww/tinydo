@@ -8,6 +8,7 @@ A lightweight, elegant desktop to-do app built with Tauri v2 + React + Type
 
 [简体中文](README.zh-CN.md)
 
+<img width="3399" height="2489" alt="poster" src="https://github.com/user-attachments/assets/d854419e-4fe7-4c4b-8fdd-ccefd61c5ff0" />
 
 
 ---
