@@ -7,6 +7,8 @@ import { useSettingsStore } from "./stores/settingsStore";
 const theme = useSettingsStore.getState().theme;
 document.documentElement.classList.toggle("dark", theme === "dark");
 
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

@@ -361,7 +361,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
           e.stopPropagation();
           remove(todo.id);
         }}
-        className="mt-0.5 shrink-0 p-1.5 text-text-3 opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+        className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
       >
         <Trash2 size={15} />
       </button>
