@@ -1,6 +1,16 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { AlertTriangle, Check, ChevronRight, GripVertical, ListPlus, Trash2 } from "lucide-react";
-import { useSortable } from "@dnd-kit/sortable";
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   cn,
@@ -16,7 +26,7 @@ import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { TagBadge } from "@/components/TagBadge";
-import type { Todo, Difficulty } from "@/types";
+import type { Todo, SubTask, Difficulty, Locale } from "@/types";
 
 interface Props {
   todo: Todo;
@@ -40,13 +50,18 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const addSubtask = useTodoStore((s) => s.addSubtask);
   const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
   const deleteSubtask = useTodoStore((s) => s.deleteSubtask);
+  const reorderSubtasks = useTodoStore((s) => s.reorderSubtasks);
   const tags = useTagStore((s) => s.tags);
   const todayK = getTodayDateKey();
   const [expanded, setExpanded] = useState(false);
   const [subtaskInput, setSubtaskInput] = useState("");
+  const [dragSubId, setDragSubId] = useState<string | null>(null);
   const refDate = boardDate ?? todayK;
 
-  const subtasks = todo.subtasks ?? [];
+  const subtasks = useMemo(
+    () => [...(todo.subtasks ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    [todo.subtasks],
+  );
   const showSubtasks = enableSubtasks;
   const doneCount = subtasks.filter((st) => st.completed).length;
   const dur = todo.durationDays ?? 1;
@@ -75,21 +90,26 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     [],
   );
 
+  const isDayDone = dur > 1
+    ? (todo.completedDayKeys ?? []).includes(refDate)
+    : todo.completed;
+
   const handleToggle = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
       if (anim) return;
-      const dir = todo.completed ? "uncompleting" : "completing";
+      const currentDone = dur > 1 ? (todo.completedDayKeys ?? []).includes(refDate) : todo.completed;
+      const dir = currentDone ? "uncompleting" : "completing";
       setAnim(dir);
       timerRef.current = setTimeout(
         () => {
-          toggle(todo.id);
+          toggle(todo.id, dur > 1 ? refDate : undefined);
           setAnim(null);
         },
         dir === "completing" ? 420 : 320,
       );
     },
-    [anim, todo.completed, todo.id, toggle],
+    [anim, todo.completed, todo.completedDayKeys, todo.id, toggle, dur, refDate],
   );
 
   function save() {
@@ -117,7 +137,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     }
   }
 
-  const isChecked = anim === "completing" || (todo.completed && anim !== "uncompleting");
+  const isChecked = anim === "completing" || (isDayDone && anim !== "uncompleting");
 
   return (
     <div
@@ -236,74 +256,19 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
         )}
 
         {showSubtasks && (
-          <div
-            className={cn("grid subtask-expand", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}
-          >
-            <div className="min-h-0 overflow-hidden">
-              <div className="mt-3 ml-1 space-y-0.5">
-                {subtasks.map((st) => (
-                  <div
-                    key={st.id}
-                    className="group/st flex min-h-[28px] items-center gap-2.5 rounded-md py-1 pr-1 transition-colors hover:bg-surface-2/60"
-                  >
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleSubtask(todo.id, st.id);
-                      }}
-                      className={cn(
-                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                        st.completed
-                          ? "border-success bg-success text-white"
-                          : "border-text-3/50 hover:border-accent",
-                      )}
-                    >
-                      {st.completed && <Check size={10} strokeWidth={2.5} />}
-                    </button>
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 text-[14px] text-text-2",
-                        st.completed && "line-through text-text-3",
-                      )}
-                    >
-                      {st.title}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteSubtask(todo.id, st.id);
-                      }}
-                      className="shrink-0 rounded p-1 text-text-3 opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover/st:opacity-100"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
-                <form
-                  onSubmit={handleAddSubtask}
-                  className="flex items-center gap-2 rounded-md border border-dashed border-border/60 bg-surface-2/40 py-1.5 pl-2 pr-2 transition-colors hover:border-accent/40 hover:bg-surface-2/60"
-                >
-                  <ListPlus size={14} className="shrink-0 text-text-3" />
-                  <input
-                    type="text"
-                    value={subtaskInput}
-                    onChange={(e) => setSubtaskInput(e.target.value)}
-                    placeholder={t("subtask.placeholder", locale)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="min-w-0 flex-1 bg-transparent text-[13px] text-text-2 outline-none placeholder:text-text-3"
-                  />
-                  <button
-                    type="submit"
-                    className="shrink-0 rounded px-2 py-0.5 text-[12px] font-medium text-accent hover:bg-accent-soft"
-                  >
-                    {t("subtask.add", locale)}
-                  </button>
-                </form>
-              </div>
-            </div>
-          </div>
+          <SubtaskList
+            expanded={expanded}
+            subtasks={subtasks}
+            locale={locale}
+            subtaskInput={subtaskInput}
+            setSubtaskInput={setSubtaskInput}
+            onAddSubtask={handleAddSubtask}
+            onToggleSubtask={(stId) => toggleSubtask(todo.id, stId)}
+            onDeleteSubtask={(stId) => deleteSubtask(todo.id, stId)}
+            onReorder={(aId, oId) => reorderSubtasks(todo.id, aId, oId)}
+            dragSubId={dragSubId}
+            setDragSubId={setDragSubId}
+          />
         )}
 
         {hasMeta && (
@@ -326,6 +291,11 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
             {dayIdx !== null && (
               <span className="inline-flex items-center gap-1 bg-accent/10 px-2 py-0.5 text-[13px] font-medium text-accent">
                 {t("duration.day_n", locale, { x: dayIdx, n: dur })}
+                {(todo.completedDayKeys ?? []).length > 0 && (
+                  <span className="opacity-70">
+                    ({t("duration.done_n", locale, { n: (todo.completedDayKeys ?? []).length })})
+                  </span>
+                )}
               </span>
             )}
 
@@ -365,6 +335,191 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
       >
         <Trash2 size={15} />
       </button>
+    </div>
+  );
+}
+
+function SubtaskRow({
+  st,
+  onToggle,
+  onDelete,
+  dragListeners,
+}: {
+  st: SubTask;
+  onToggle: () => void;
+  onDelete: () => void;
+  dragListeners?: Record<string, unknown>;
+}) {
+  return (
+    <div className="group/st flex min-h-[28px] items-center gap-1.5 rounded-md py-1 pr-1 transition-colors hover:bg-surface-2/60">
+      <div
+        {...(dragListeners ?? {})}
+        onClick={(e) => e.stopPropagation()}
+        className="cursor-grab text-text-3 opacity-0 transition-opacity group-hover/st:opacity-40"
+      >
+        <GripVertical size={12} />
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        className={cn(
+          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+          st.completed
+            ? "border-success bg-success text-white"
+            : "border-text-3/50 hover:border-accent",
+        )}
+      >
+        {st.completed && <Check size={10} strokeWidth={2.5} />}
+      </button>
+      <span
+        className={cn(
+          "min-w-0 flex-1 text-[14px] text-text-2",
+          st.completed && "line-through text-text-3",
+        )}
+      >
+        {st.title}
+      </span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        className="shrink-0 rounded p-1 text-text-3 opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover/st:opacity-100"
+      >
+        <Trash2 size={12} />
+      </button>
+    </div>
+  );
+}
+
+function SortableSubtaskRow({
+  st,
+  onToggle,
+  onDelete,
+}: {
+  st: SubTask;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: st.id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        opacity: isDragging ? 0 : undefined,
+        position: "relative",
+      }}
+      {...attributes}
+    >
+      <SubtaskRow st={st} onToggle={onToggle} onDelete={onDelete} dragListeners={listeners} />
+    </div>
+  );
+}
+
+function SubtaskList({
+  expanded,
+  subtasks,
+  locale,
+  subtaskInput,
+  setSubtaskInput,
+  onAddSubtask,
+  onToggleSubtask,
+  onDeleteSubtask,
+  onReorder,
+  dragSubId,
+  setDragSubId,
+}: {
+  expanded: boolean;
+  subtasks: SubTask[];
+  locale: Locale;
+  subtaskInput: string;
+  setSubtaskInput: (v: string) => void;
+  onAddSubtask: (e: React.FormEvent) => void;
+  onToggleSubtask: (id: string) => void;
+  onDeleteSubtask: (id: string) => void;
+  onReorder: (activeId: string, overId: string) => void;
+  dragSubId: string | null;
+  setDragSubId: (id: string | null) => void;
+}) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const dragSub = dragSubId ? subtasks.find((s) => s.id === dragSubId) : null;
+
+  function onDragStart(ev: DragStartEvent) {
+    setDragSubId(String(ev.active.id));
+  }
+  function onDragEnd(ev: DragEndEvent) {
+    const { active, over } = ev;
+    setDragSubId(null);
+    if (over && active.id !== over.id) {
+      onReorder(String(active.id), String(over.id));
+    }
+  }
+
+  return (
+    <div className={cn("grid subtask-expand", expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
+      <div className="min-h-0 overflow-hidden">
+        <div className="mt-3 ml-1 space-y-0.5">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+          >
+            <SortableContext
+              items={subtasks.map((st) => st.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {subtasks.map((st) => (
+                <SortableSubtaskRow
+                  key={st.id}
+                  st={st}
+                  onToggle={() => onToggleSubtask(st.id)}
+                  onDelete={() => onDeleteSubtask(st.id)}
+                />
+              ))}
+            </SortableContext>
+            <DragOverlay dropAnimation={null}>
+              {dragSub ? (
+                <div className="cursor-grabbing rounded-md bg-surface-1 shadow-lg">
+                  <SubtaskRow
+                    st={dragSub}
+                    onToggle={() => {}}
+                    onDelete={() => {}}
+                  />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+          <form
+            onSubmit={onAddSubtask}
+            className="flex items-center gap-2 rounded-md border border-dashed border-border/60 bg-surface-2/40 py-1.5 pl-2 pr-2 transition-colors hover:border-accent/40 hover:bg-surface-2/60"
+          >
+            <ListPlus size={14} className="shrink-0 text-text-3" />
+            <input
+              type="text"
+              value={subtaskInput}
+              onChange={(e) => setSubtaskInput(e.target.value)}
+              placeholder={t("subtask.placeholder", locale)}
+              onClick={(e) => e.stopPropagation()}
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-text-2 outline-none placeholder:text-text-3"
+            />
+            <button
+              type="submit"
+              className="shrink-0 rounded px-2 py-0.5 text-[12px] font-medium text-accent hover:bg-accent-soft"
+            >
+              {t("subtask.add", locale)}
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

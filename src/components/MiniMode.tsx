@@ -116,7 +116,10 @@ export function MiniMode({ onExpand }: Props) {
         <div className="flex items-start gap-3">
           <button
             type="button"
-            onClick={() => toggle(td.id)}
+            onClick={() => {
+              const dur = td.durationDays ?? 1;
+              toggle(td.id, dur > 1 ? todayK : undefined);
+            }}
             className={cn(
               "mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors hover:border-accent",
               isOverdue ? "border-warning/50" : "border-text-3/50",

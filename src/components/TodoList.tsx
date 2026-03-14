@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -47,11 +47,25 @@ export function TodoList({ board, boardDate }: Props) {
     return list;
   }, [board, boardDate, filterTagIds, todayK, todos, viewMode]);
 
-  const active = useMemo(
-    () => filtered.filter((td) => !td.completed).sort((a, b) => a.order - b.order),
-    [filtered],
+  const effectiveBoardDate = board === "today" ? todayK : boardDate;
+
+  const isDayCompleted = useCallback(
+    (td: { completed: boolean; durationDays: number; completedDayKeys?: string[] }) => {
+      if ((td.durationDays ?? 1) > 1) {
+        return (td.completedDayKeys ?? []).includes(effectiveBoardDate);
+      }
+      return td.completed;
+    },
+    [effectiveBoardDate],
   );
-  const completed = filtered.filter((td) => td.completed).sort((a, b) => a.order - b.order);
+
+  const active = useMemo(
+    () => filtered.filter((td) => !isDayCompleted(td)).sort((a, b) => a.order - b.order),
+    [filtered, isDayCompleted],
+  );
+  const completed = filtered
+    .filter((td) => isDayCompleted(td))
+    .sort((a, b) => a.order - b.order);
   const odN = active.filter((td) => getOverdueDays(td.targetDate, todayK) > 0).length;
 
   const [activeId, setActiveId] = useState<string | null>(null);

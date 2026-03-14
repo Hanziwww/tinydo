@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { AlertTriangle, Hash, Settings2 } from "lucide-react";
+import { AlertTriangle, Calendar, Hash, Settings2 } from "lucide-react";
 import {
   cn,
   formatDate,
@@ -28,6 +28,7 @@ import { MiniMode } from "@/components/MiniMode";
 import { FadeTransition } from "@/components/FadeTransition";
 import { useReminders } from "@/hooks/useReminders";
 import type { PlanningBoard } from "@/types";
+import { HistoryPanel } from "@/components/HistoryPanel";
 
 const MINI_W = 320;
 const MINI_H = 420;
@@ -38,7 +39,6 @@ function App() {
   const [board, setBoard] = useState<PlanningBoard>("today");
   const [now, setNow] = useState(() => new Date());
   const [mini, setMini] = useState(false);
-  const savedRect = useRef<{ w: number; h: number; x: number; y: number } | null>(null);
 
   const locale = useSettingsStore((s) => s.locale);
   const showTimeline = useSettingsStore((s) => s.showTimeline);
@@ -57,16 +57,18 @@ function App() {
   const tomorrowK = getTomorrowDateKey(now);
   const unlocked = isTomorrowPlanningUnlocked(unlockHour, now);
   const bDate = board === "today" ? todayK : tomorrowK;
-  const dispDate = board === "today" ? todayD : tomorrowD;
+  const dispDate = board === "history" ? todayD : board === "today" ? todayD : tomorrowD;
   const overdueN = useMemo(
     () => todos.filter((td) => !td.completed && getOverdueDays(td.targetDate, todayK) > 0).length,
     [todos, todayK],
   );
 
   const greeting =
-    board === "today"
-      ? t("app.greeting", locale, { name: userName || "TinyDo" })
-      : t("app.greeting_tomorrow", locale);
+    board === "history"
+      ? t("app.greeting_history", locale)
+      : board === "today"
+        ? t("app.greeting", locale, { name: userName || "TinyDo" })
+        : t("app.greeting_tomorrow", locale);
 
   useEffect(() => {
     if (!unlocked && board === "tomorrow") setBoard("today");
@@ -87,6 +89,8 @@ function App() {
   }, [splitOverdueSubtasks]);
 
   const miniOnTop = useSettingsStore((s) => s.miniAlwaysOnTop);
+  const setFullModeRect = useSettingsStore((s) => s.setFullModeRect);
+  const setMiniModePosition = useSettingsStore((s) => s.setMiniModePosition);
 
   const enterMini = useCallback(async () => {
     const win = getCurrentWindow();
@@ -94,32 +98,41 @@ function App() {
       const sf = await win.scaleFactor();
       const size = await win.innerSize();
       const pos = await win.outerPosition();
-      savedRect.current = {
+      setFullModeRect({
         w: size.width / sf,
         h: size.height / sf,
         x: pos.x / sf,
         y: pos.y / sf,
-      };
+      });
     } catch {
-      savedRect.current = { w: 1080, h: 780, x: 200, y: 100 };
+      setFullModeRect({ w: 1080, h: 780, x: 200, y: 100 });
     }
     await win.setResizable(false);
     await win.setAlwaysOnTop(miniOnTop);
     await win.setMinSize(new LogicalSize(MINI_W, 200));
     await win.setSize(new LogicalSize(MINI_W, MINI_H));
+    const savedMiniPos = useSettingsStore.getState().miniModePosition;
+    if (savedMiniPos) {
+      await win.setPosition(new LogicalPosition(savedMiniPos.x, savedMiniPos.y));
+    }
     setMini(true);
-  }, [miniOnTop]);
+  }, [miniOnTop, setFullModeRect]);
 
   const exitMini = useCallback(async () => {
     const win = getCurrentWindow();
+    try {
+      const sf = await win.scaleFactor();
+      const pos = await win.outerPosition();
+      setMiniModePosition({ x: pos.x / sf, y: pos.y / sf });
+    } catch { /* ignore */ }
     await win.setAlwaysOnTop(false);
     await win.setMinSize(new LogicalSize(640, 480));
-    const r = savedRect.current ?? { w: 1080, h: 780, x: 200, y: 100 };
+    const r = useSettingsStore.getState().fullModeRect ?? { w: 1080, h: 780, x: 200, y: 100 };
     await win.setSize(new LogicalSize(r.w, r.h));
     await win.setPosition(new LogicalPosition(r.x, r.y));
     await win.setResizable(true);
     setMini(false);
-  }, []);
+  }, [setMiniModePosition]);
 
   if (mini) {
     return (
@@ -210,33 +223,57 @@ function App() {
             >
               {t("board.tomorrow", locale)}
             </button>
+            <button
+              type="button"
+              onClick={() => setBoard("history")}
+              className={cn(
+                "flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-semibold transition-all duration-200",
+                board === "history"
+                  ? "border-accent text-accent"
+                  : "border-transparent text-text-3 hover:text-text-2",
+              )}
+            >
+              <Calendar size={14} />
+              {t("board.history", locale)}
+            </button>
           </div>
 
-          <div className="mt-2.5">
-            <TodoInput
-              board={board}
-              targetDate={bDate}
-              disabled={board === "tomorrow" && !unlocked}
-            />
-          </div>
-
-          <TagFilter />
+          {board !== "history" && (
+            <>
+              <div className="mt-2.5">
+                <TodoInput
+                  board={board}
+                  targetDate={bDate}
+                  disabled={board === "tomorrow" && !unlocked}
+                />
+              </div>
+              <TagFilter />
+            </>
+          )}
         </header>
 
         <div className="flex min-h-0 flex-1">
           <main className="flex min-w-0 flex-1 flex-col">
-            <FadeTransition
-              transitionKey={`${board}-${viewMode}`}
-              className="min-h-0 flex-1 overflow-y-auto"
-            >
-              <TodoList board={board} boardDate={bDate} />
-            </FadeTransition>
-            {showTimeline && (
-              <div className="shrink-0 border-t border-border px-6 py-3">
-                <Timeline board={board} boardDate={bDate} />
-              </div>
+            {board === "history" ? (
+              <FadeTransition transitionKey="history" className="min-h-0 flex-1 overflow-y-auto">
+                <HistoryPanel />
+              </FadeTransition>
+            ) : (
+              <>
+                <FadeTransition
+                  transitionKey={`${board}-${viewMode}`}
+                  className="min-h-0 flex-1 overflow-y-auto"
+                >
+                  <TodoList board={board} boardDate={bDate} />
+                </FadeTransition>
+                {showTimeline && (
+                  <div className="shrink-0 border-t border-border px-6 py-3">
+                    <Timeline board={board} boardDate={bDate} />
+                  </div>
+                )}
+                <StatusBar board={board} boardDate={bDate} />
+              </>
             )}
-            <StatusBar board={board} boardDate={bDate} />
           </main>
 
           {showTags && (

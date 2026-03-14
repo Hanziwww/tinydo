@@ -6,6 +6,7 @@ import { getTodayDateKey, getTomorrowDateKey, shiftDateKey } from "@/lib/utils";
 
 interface TodoState {
   todos: Todo[];
+  archivedTodos: Todo[];
   viewMode: ViewMode;
   filterTagIds: string[];
   editingTodoId: string | null;
@@ -14,10 +15,12 @@ interface TodoState {
   clearFilterTags: () => void;
   addTodo: (title: string, tagIds?: string[], targetDate?: string) => void;
   updateTodo: (id: string, updates: Partial<Omit<Todo, "id">>) => void;
-  toggleTodo: (id: string) => void;
+  toggleTodo: (id: string, dateKey?: string) => void;
   deleteTodo: (id: string) => void;
   reorderTodos: (activeId: string, overId: string, scopedIds?: string[]) => void;
-  clearCompleted: () => void;
+  reorderSubtasks: (todoId: string, activeId: string, overId: string) => void;
+  archiveCompleted: () => void;
+  archiveBoardCompleted: (boardDate: string) => void;
   removeTagFromAllTodos: (tagId: string) => void;
   setEditingTodoId: (id: string | null) => void;
   addSubtask: (todoId: string, title: string) => void;
@@ -25,6 +28,7 @@ interface TodoState {
   deleteSubtask: (todoId: string, subtaskId: string) => void;
   splitOverdueSubtasks: (todayKey: string) => void;
   importTodos: (incoming: Todo[]) => number;
+  importArchivedTodos: (incoming: Todo[]) => number;
 }
 
 const now = Date.now();
@@ -48,6 +52,7 @@ const SEED_TODOS: Todo[] = [
     createdAt: now,
     subtasks: [],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s2",
@@ -62,12 +67,13 @@ const SEED_TODOS: Todo[] = [
     order: 1,
     createdAt: now - 1000,
     subtasks: [
-      { id: "st2a", title: "读摘要和结论", completed: false },
-      { id: "st2b", title: "精读方法部分", completed: false },
-      { id: "st2c", title: "整理关键公式和图表", completed: false },
-      { id: "st2d", title: "写一页总结笔记", completed: false },
+      { id: "st2a", title: "读摘要和结论", completed: false, order: 0 },
+      { id: "st2b", title: "精读方法部分", completed: false, order: 1 },
+      { id: "st2c", title: "整理关键公式和图表", completed: false, order: 2 },
+      { id: "st2d", title: "写一页总结笔记", completed: false, order: 3 },
     ],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s3",
@@ -82,11 +88,12 @@ const SEED_TODOS: Todo[] = [
     order: 2,
     createdAt: now - 2000,
     subtasks: [
-      { id: "st3a", title: "准备 ABR 原始数据", completed: true },
-      { id: "st3b", title: "实现带通滤波模块", completed: false },
-      { id: "st3c", title: "对比降噪前后波形", completed: false },
+      { id: "st3a", title: "准备 ABR 原始数据", completed: true, order: 0 },
+      { id: "st3b", title: "实现带通滤波模块", completed: false, order: 1 },
+      { id: "st3c", title: "对比降噪前后波形", completed: false, order: 2 },
     ],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s4",
@@ -101,12 +108,13 @@ const SEED_TODOS: Todo[] = [
     order: 3,
     createdAt: now - 3000,
     subtasks: [
-      { id: "st4a", title: "确定研究主题和关键词", completed: false },
-      { id: "st4b", title: "PubMed/Web of Science 检索", completed: false },
-      { id: "st4c", title: "筛选并整理 15–20 篇核心文献", completed: false },
-      { id: "st4d", title: "按主题分类写大纲结构", completed: false },
+      { id: "st4a", title: "确定研究主题和关键词", completed: false, order: 0 },
+      { id: "st4b", title: "PubMed/Web of Science 检索", completed: false, order: 1 },
+      { id: "st4c", title: "筛选并整理 15–20 篇核心文献", completed: false, order: 2 },
+      { id: "st4d", title: "按主题分类写大纲结构", completed: false, order: 3 },
     ],
     durationDays: 3,
+    completedDayKeys: [],
   },
   {
     id: "s5",
@@ -122,6 +130,7 @@ const SEED_TODOS: Todo[] = [
     createdAt: now - 4000,
     subtasks: [],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s6",
@@ -136,11 +145,12 @@ const SEED_TODOS: Todo[] = [
     order: 5,
     createdAt: now - 5000,
     subtasks: [
-      { id: "st6a", title: "列购物清单（维生素 D 规格）", completed: false },
-      { id: "st6b", title: "去药店购买", completed: false },
-      { id: "st6c", title: "顺路取快递", completed: false },
+      { id: "st6a", title: "列购物清单（维生素 D 规格）", completed: false, order: 0 },
+      { id: "st6b", title: "去药店购买", completed: false, order: 1 },
+      { id: "st6c", title: "顺路取快递", completed: false, order: 2 },
     ],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s7",
@@ -156,6 +166,7 @@ const SEED_TODOS: Todo[] = [
     createdAt: now - 6000,
     subtasks: [],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s8",
@@ -171,6 +182,7 @@ const SEED_TODOS: Todo[] = [
     createdAt: now - 7000,
     subtasks: [],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s9",
@@ -185,12 +197,13 @@ const SEED_TODOS: Todo[] = [
     order: 8,
     createdAt: now - 8000,
     subtasks: [
-      { id: "st9a", title: "选定要讲的文献", completed: false },
-      { id: "st9b", title: "提炼背景、方法、结果要点", completed: false },
-      { id: "st9c", title: "做 8–10 页 slides", completed: false },
-      { id: "st9d", title: "预讲一遍控制时间", completed: false },
+      { id: "st9a", title: "选定要讲的文献", completed: false, order: 0 },
+      { id: "st9b", title: "提炼背景、方法、结果要点", completed: false, order: 1 },
+      { id: "st9c", title: "做 8–10 页 slides", completed: false, order: 2 },
+      { id: "st9d", title: "预讲一遍控制时间", completed: false, order: 3 },
     ],
     durationDays: 1,
+    completedDayKeys: [],
   },
   {
     id: "s10",
@@ -205,11 +218,12 @@ const SEED_TODOS: Todo[] = [
     order: 9,
     createdAt: now - 9000,
     subtasks: [
-      { id: "st10a", title: "游泳 40 分钟", completed: false },
-      { id: "st10b", title: "平板支撑 3 组", completed: false },
-      { id: "st10c", title: "卷腹 + 拉伸", completed: false },
+      { id: "st10a", title: "游泳 40 分钟", completed: false, order: 0 },
+      { id: "st10b", title: "平板支撑 3 组", completed: false, order: 1 },
+      { id: "st10c", title: "卷腹 + 拉伸", completed: false, order: 2 },
     ],
     durationDays: 1,
+    completedDayKeys: [],
   },
 ];
 
@@ -217,6 +231,7 @@ export const useTodoStore = create<TodoState>()(
   persist(
     (set, get) => ({
       todos: SEED_TODOS,
+      archivedTodos: [],
       viewMode: "all" as ViewMode,
       filterTagIds: [],
       editingTodoId: null,
@@ -251,6 +266,7 @@ export const useTodoStore = create<TodoState>()(
           createdAt: Date.now(),
           subtasks: [],
           durationDays: 1,
+          completedDayKeys: [],
         };
         set((s) => ({ todos: [todo, ...s.todos] }));
       },
@@ -258,10 +274,27 @@ export const useTodoStore = create<TodoState>()(
       updateTodo: (id, updates) =>
         set((s) => ({ todos: s.todos.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
 
-      toggleTodo: (id) =>
+      toggleTodo: (id, dateKey) =>
         set((s) => ({
           todos: s.todos.map((t) => {
             if (t.id !== id) return t;
+            const dur = t.durationDays ?? 1;
+            if (dur > 1 && dateKey) {
+              const keys = t.completedDayKeys ?? [];
+              const alreadyDone = keys.includes(dateKey);
+              const nextKeys = alreadyDone
+                ? keys.filter((k) => k !== dateKey)
+                : [...keys, dateKey];
+              const allDone = nextKeys.length >= dur;
+              return {
+                ...t,
+                completedDayKeys: nextKeys,
+                completed: allDone,
+                subtasks: allDone
+                  ? (t.subtasks ?? []).map((st) => ({ ...st, completed: true }))
+                  : (t.subtasks ?? []),
+              };
+            }
             const next = !t.completed;
             return {
               ...t,
@@ -308,7 +341,49 @@ export const useTodoStore = create<TodoState>()(
         });
       },
 
-      clearCompleted: () => set((s) => ({ todos: s.todos.filter((t) => !t.completed) })),
+      reorderSubtasks: (todoId, activeId, overId) => {
+        set((s) => ({
+          todos: s.todos.map((t) => {
+            if (t.id !== todoId) return t;
+            const subs = [...(t.subtasks ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+            const activeIdx = subs.findIndex((st) => st.id === activeId);
+            const overIdx = subs.findIndex((st) => st.id === overId);
+            if (activeIdx === -1 || overIdx === -1) return t;
+            const [moved] = subs.splice(activeIdx, 1);
+            subs.splice(overIdx, 0, moved);
+            return {
+              ...t,
+              subtasks: subs.map((st, i) => ({ ...st, order: i })),
+            };
+          }),
+        }));
+      },
+
+      archiveCompleted: () =>
+        set((s) => {
+          const done = s.todos.filter((t) => t.completed);
+          const remaining = s.todos.filter((t) => !t.completed);
+          return {
+            todos: remaining,
+            archivedTodos: [...s.archivedTodos, ...done],
+          };
+        }),
+
+      archiveBoardCompleted: (boardDate) =>
+        set((s) => {
+          const todayK = getTodayDateKey();
+          const isToday = boardDate === todayK;
+          const done = s.todos.filter((t) => {
+            if (!t.completed) return false;
+            return isToday ? t.targetDate <= todayK : t.targetDate === boardDate;
+          });
+          if (done.length === 0) return s;
+          const doneIds = new Set(done.map((t) => t.id));
+          return {
+            todos: s.todos.filter((t) => !doneIds.has(t.id)),
+            archivedTodos: [...s.archivedTodos, ...done],
+          };
+        }),
 
       removeTagFromAllTodos: (tagId) =>
         set((s) => ({
@@ -320,9 +395,10 @@ export const useTodoStore = create<TodoState>()(
           todos: s.todos.map((t) => {
             if (t.id !== todoId) return t;
             const subs = t.subtasks ?? [];
+            const maxOrder = subs.length > 0 ? Math.max(...subs.map((st) => st.order ?? 0)) : -1;
             return {
               ...t,
-              subtasks: [...subs, { id: nanoid(), title, completed: false }],
+              subtasks: [...subs, { id: nanoid(), title, completed: false, order: maxOrder + 1 }],
             };
           }),
         })),
@@ -356,12 +432,31 @@ export const useTodoStore = create<TodoState>()(
           for (const t of incoming) {
             existingMap.set(t.id, {
               ...t,
-              subtasks: t.subtasks ?? [],
+              subtasks: (t.subtasks ?? []).map((st, i) => ({ ...st, order: st.order ?? i })),
               durationDays: t.durationDays ?? 1,
+              completedDayKeys: t.completedDayKeys ?? [],
             });
             count++;
           }
           return { todos: Array.from(existingMap.values()) };
+        });
+        return count;
+      },
+
+      importArchivedTodos: (incoming) => {
+        let count = 0;
+        set((s) => {
+          const existingMap = new Map(s.archivedTodos.map((t) => [t.id, t]));
+          for (const t of incoming) {
+            existingMap.set(t.id, {
+              ...t,
+              subtasks: (t.subtasks ?? []).map((st, i) => ({ ...st, order: st.order ?? i })),
+              durationDays: t.durationDays ?? 1,
+              completedDayKeys: t.completedDayKeys ?? [],
+            });
+            count++;
+          }
+          return { archivedTodos: Array.from(existingMap.values()) };
         });
         return count;
       },
@@ -390,6 +485,7 @@ export const useTodoStore = create<TodoState>()(
                 completed: true,
                 subtasks: done,
                 targetDate: yesterdayKey,
+                completedDayKeys: td.completedDayKeys ?? [],
               });
             }
             if (pending.length > 0) {
@@ -398,6 +494,7 @@ export const useTodoStore = create<TodoState>()(
                 targetDate: todayKey,
                 completed: false,
                 subtasks: pending,
+                completedDayKeys: td.completedDayKeys ?? [],
               });
             } else if (done.length === 0) {
               next.push({ ...td, targetDate: todayKey });
@@ -409,19 +506,22 @@ export const useTodoStore = create<TodoState>()(
     }),
     {
       name: "tinydo-todos",
-      version: 6,
-      partialize: (state) => ({ todos: state.todos }),
+      version: 7,
+      partialize: (state) => ({ todos: state.todos, archivedTodos: state.archivedTodos }),
       migrate: (persisted, prevVersion) => {
         if (prevVersion < 6) {
-          return { todos: SEED_TODOS };
+          return { todos: SEED_TODOS, archivedTodos: [] };
         }
-        const s = persisted as { todos?: Todo[] };
-        const todos = (s?.todos ?? SEED_TODOS).map((t) => ({
+        const s = persisted as { todos?: Todo[]; archivedTodos?: Todo[] };
+        const migrateTodo = (t: Todo) => ({
           ...t,
-          subtasks: t.subtasks ?? [],
+          subtasks: (t.subtasks ?? []).map((st, i) => ({ ...st, order: st.order ?? i })),
           durationDays: t.durationDays ?? 1,
-        }));
-        return { todos };
+          completedDayKeys: t.completedDayKeys ?? [],
+        });
+        const todos = (s?.todos ?? SEED_TODOS).map(migrateTodo);
+        const archivedTodos = (s?.archivedTodos ?? []).map(migrateTodo);
+        return { todos, archivedTodos };
       },
     },
   ),

@@ -5,15 +5,43 @@ import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { Todo } from "@/types";
 
+function normalizeTodo(t: Record<string, unknown>): Todo {
+  return {
+    id: (t.id as string) ?? crypto.randomUUID(),
+    title: (t.title as string) ?? "",
+    completed: !!t.completed,
+    tagIds: Array.isArray(t.tagIds) ? t.tagIds : [],
+    difficulty: (t.difficulty as number) ?? 2,
+    timeStart: (t.timeStart as string) ?? null,
+    timeEnd: (t.timeEnd as string) ?? null,
+    reminderMinsBefore: (t.reminderMinsBefore as number) ?? null,
+    targetDate:
+      (t.targetDate as string) ?? new Date().toISOString().slice(0, 10).replace(/-/g, ""),
+    order: typeof t.order === "number" ? t.order : 0,
+    createdAt: typeof t.createdAt === "number" ? t.createdAt : Date.now(),
+    subtasks: Array.isArray(t.subtasks)
+      ? (t.subtasks as Record<string, unknown>[]).map((st, i) => ({
+          id: (st.id as string) ?? crypto.randomUUID(),
+          title: (st.title as string) ?? "",
+          completed: !!st.completed,
+          order: typeof st.order === "number" ? st.order : i,
+        }))
+      : [],
+    durationDays: typeof t.durationDays === "number" ? t.durationDays : 1,
+    completedDayKeys: Array.isArray(t.completedDayKeys) ? (t.completedDayKeys as string[]) : [],
+  } as Todo;
+}
+
 export async function exportAllData() {
-  const { todos } = useTodoStore.getState();
+  const { todos, archivedTodos } = useTodoStore.getState();
   const { tags, tagGroups } = useTagStore.getState();
   const { theme, locale, showTimeline, tomorrowPlanningUnlockHour } = useSettingsStore.getState();
 
   const data = {
-    version: "1.0",
+    version: "2.0",
     exportedAt: new Date().toISOString(),
     todos,
+    archivedTodos,
     tags,
     tagGroups,
     settings: {
@@ -57,21 +85,15 @@ export async function importAllData(): Promise<number> {
     throw new Error("Invalid format: missing todos array");
   }
 
-  const incoming: Todo[] = data.todos.map((t: Record<string, unknown>) => ({
-    id: t.id ?? crypto.randomUUID(),
-    title: t.title ?? "",
-    completed: !!t.completed,
-    tagIds: Array.isArray(t.tagIds) ? t.tagIds : [],
-    difficulty: t.difficulty ?? 2,
-    timeStart: t.timeStart ?? null,
-    timeEnd: t.timeEnd ?? null,
-    reminderMinsBefore: t.reminderMinsBefore ?? null,
-    targetDate: t.targetDate ?? new Date().toISOString().slice(0, 10).replace(/-/g, ""),
-    order: typeof t.order === "number" ? t.order : 0,
-    createdAt: typeof t.createdAt === "number" ? t.createdAt : Date.now(),
-    subtasks: Array.isArray(t.subtasks) ? t.subtasks : [],
-    durationDays: typeof t.durationDays === "number" ? t.durationDays : 1,
-  }));
+  const incoming: Todo[] = data.todos.map((t: Record<string, unknown>) => normalizeTodo(t));
+  let count = useTodoStore.getState().importTodos(incoming);
 
-  return useTodoStore.getState().importTodos(incoming);
+  if (Array.isArray(data.archivedTodos)) {
+    const archivedIncoming: Todo[] = data.archivedTodos.map((t: Record<string, unknown>) =>
+      normalizeTodo(t),
+    );
+    count += useTodoStore.getState().importArchivedTodos(archivedIncoming);
+  }
+
+  return count;
 }

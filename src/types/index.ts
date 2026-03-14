@@ -1,6 +1,4 @@
 export type Difficulty = 1 | 2 | 3 | 4;
-export type PlanningBoard = "today" | "tomorrow";
-
 export interface Tag {
   id: string;
   name: string;
@@ -18,6 +16,7 @@ export interface SubTask {
   id: string;
   title: string;
   completed: boolean;
+  order: number;
 }
 
 export interface Todo {
@@ -34,8 +33,10 @@ export interface Todo {
   createdAt: number;
   subtasks: SubTask[];
   durationDays: number;
+  completedDayKeys: string[];
 }
 
 export type ViewMode = "all" | "active" | "completed";
 export type Theme = "dark" | "light";
 export type Locale = "zh" | "en";
+export type PlanningBoard = "today" | "tomorrow" | "history";

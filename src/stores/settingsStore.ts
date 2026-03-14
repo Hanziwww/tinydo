@@ -2,6 +2,18 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Theme, Locale } from "@/types";
 
+interface WindowRect {
+  w: number;
+  h: number;
+  x: number;
+  y: number;
+}
+
+interface WindowPos {
+  x: number;
+  y: number;
+}
+
 interface SettingsState {
   theme: Theme;
   locale: Locale;
@@ -15,6 +27,8 @@ interface SettingsState {
   miniFadeOpacity: number;
   enableSubtasks: boolean;
   maxDurationDays: number;
+  fullModeRect: WindowRect | null;
+  miniModePosition: WindowPos | null;
   setTheme: (theme: Theme) => void;
   setLocale: (locale: Locale) => void;
   toggleTimeline: () => void;
@@ -26,6 +40,8 @@ interface SettingsState {
   setMiniFadeOpacity: (v: number) => void;
   setEnableSubtasks: (v: boolean) => void;
   setMaxDurationDays: (v: number) => void;
+  setFullModeRect: (rect: WindowRect | null) => void;
+  setMiniModePosition: (pos: WindowPos | null) => void;
 }
 
 function applyTheme(theme: Theme) {
@@ -49,6 +65,8 @@ export const useSettingsStore = create<SettingsState>()(
       miniFadeOpacity: 0.45,
       enableSubtasks: true,
       maxDurationDays: 5,
+      fullModeRect: null,
+      miniModePosition: null,
 
       setTheme: (theme) => {
         applyTheme(theme);
@@ -69,10 +87,12 @@ export const useSettingsStore = create<SettingsState>()(
       setMiniFadeOpacity: (v) => set({ miniFadeOpacity: Math.max(0.1, Math.min(1, v)) }),
       setEnableSubtasks: (v) => set({ enableSubtasks: v }),
       setMaxDurationDays: (v) => set({ maxDurationDays: Math.max(1, Math.min(7, Math.round(v))) }),
+      setFullModeRect: (rect) => set({ fullModeRect: rect }),
+      setMiniModePosition: (pos) => set({ miniModePosition: pos }),
     }),
     {
       name: "tinydo-settings",
-      version: 6,
+      version: 7,
       migrate: (persistedState) => {
         const s = (persistedState ?? {}) as Record<string, unknown>;
         return {
@@ -88,6 +108,8 @@ export const useSettingsStore = create<SettingsState>()(
           miniFadeOpacity: (s.miniFadeOpacity as number) ?? 0.45,
           enableSubtasks: (s.enableSubtasks as boolean) ?? true,
           maxDurationDays: (s.maxDurationDays as number) ?? 5,
+          fullModeRect: (s.fullModeRect as { w: number; h: number; x: number; y: number }) ?? null,
+          miniModePosition: (s.miniModePosition as { x: number; y: number }) ?? null,
         };
       },
       onRehydrateStorage: () => (state) => {
