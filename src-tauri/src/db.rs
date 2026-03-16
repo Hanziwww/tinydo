@@ -230,6 +230,41 @@ pub fn clear_tag_groups(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+pub fn replace_import_data(
+    conn: &Connection,
+    todos: &[Todo],
+    archived_todos: &[Todo],
+    tags: &[Tag],
+    tag_groups: &[TagGroup],
+    settings: Option<&Settings>,
+) -> Result<(), AppError> {
+    let tx = conn.unchecked_transaction()?;
+
+    clear_todos(&tx)?;
+    clear_tags(&tx)?;
+    clear_tag_groups(&tx)?;
+
+    for todo in todos {
+        save_todo(&tx, todo, false)?;
+    }
+    for todo in archived_todos {
+        save_todo(&tx, todo, true)?;
+    }
+    for tag in tags {
+        save_tag(&tx, tag)?;
+    }
+    for group in tag_groups {
+        save_tag_group(&tx, group)?;
+    }
+
+    if let Some(settings) = settings {
+        save_settings(&tx, settings)?;
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
 // ── Bulk migration ─────────────────────────────────────────────────────
 
 pub fn migrate_from_legacy(conn: &Connection, data: &LegacyData) -> Result<(), AppError> {
@@ -515,6 +550,58 @@ mod tests {
 
         clear_tag_groups(&conn).unwrap();
         assert!(get_tag_groups(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn replace_import_data_rolls_back_on_write_error() {
+        let conn = test_conn();
+        save_todo(&conn, &sample_todo("old"), false).unwrap();
+        save_tag(
+            &conn,
+            &Tag {
+                id: "old-tag".into(),
+                name: "Old".into(),
+                color: "#000".into(),
+                group_id: None,
+            },
+        )
+        .unwrap();
+
+        conn.execute_batch(
+            "
+            CREATE TRIGGER fail_bad_tag
+            BEFORE INSERT ON tags
+            WHEN NEW.id = 'bad-tag'
+            BEGIN
+                SELECT RAISE(ABORT, 'blocked');
+            END;
+            ",
+        )
+        .unwrap();
+
+        let err = replace_import_data(
+            &conn,
+            &[sample_todo("new")],
+            &[],
+            &[Tag {
+                id: "bad-tag".into(),
+                name: "Bad".into(),
+                color: "#f00".into(),
+                group_id: None,
+            }],
+            &[],
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Db(_)));
+
+        let todos = get_todos(&conn, false).unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].id, "old");
+
+        let tags = get_tags(&conn).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].id, "old-tag");
     }
 
     #[test]

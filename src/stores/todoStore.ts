@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import type { Todo, ViewMode, Difficulty, TimeSlot } from "@/types";
 import { getTodayDateKey, getTomorrowDateKey, shiftDateKey } from "@/lib/utils";
 import * as backend from "@/lib/backend";
+import { showErrorNotice } from "@/lib/errorNotice";
 
 interface TodoState {
   todos: Todo[];
@@ -36,30 +37,31 @@ interface TodoState {
   importArchivedTodos: (incoming: Todo[]) => number;
 }
 
+type TodoRollbackState = Pick<TodoState, "todos" | "archivedTodos" | "editingTodoId">;
+
+function rollbackTodoState(previous: Partial<TodoRollbackState>, error: unknown) {
+  useTodoStore.setState(previous);
+  showErrorNotice(error);
+}
+
 function persistTodos(todos: Todo[]) {
-  backend
-    .saveTodos(todos, false)
-    .catch((e: unknown) => console.error("Failed to persist todos:", e));
+  return backend.saveTodos(todos, false);
 }
 
 function persistArchivedTodos(archived: Todo[]) {
-  backend
-    .saveTodos(archived, true)
-    .catch((e: unknown) => console.error("Failed to persist archived:", e));
+  return backend.saveTodos(archived, true);
 }
 
 function persistSingleTodo(todo: Todo, archived = false) {
-  backend
-    .saveTodo(todo, archived)
-    .catch((e: unknown) => console.error("Failed to persist todo:", e));
+  return backend.saveTodo(todo, archived);
 }
 
 function persistDeleteTodo(id: string) {
-  backend.deleteTodo(id).catch((e: unknown) => console.error("Failed to delete todo:", e));
+  return backend.deleteTodo(id);
 }
 
 function persistArchiveTodos(ids: string[]) {
-  backend.archiveTodos(ids).catch((e: unknown) => console.error("Failed to archive todos:", e));
+  return backend.archiveTodos(ids);
 }
 
 const now = Date.now();
@@ -273,9 +275,10 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   clearFilterTags: () => set({ filterTagIds: [] }),
 
   addTodo: (title, tagIds = [], targetDate = getTodayDateKey()) => {
+    const previousTodos = get().todos;
     const todos = get().todos;
-    const minOrder =
-      todos.length > 0 ? Math.min(...todos.filter((t) => !t.completed).map((t) => t.order)) : 0;
+    const activeOrders = todos.filter((t) => !t.completed).map((t) => t.order);
+    const minOrder = activeOrders.length > 0 ? Math.min(...activeOrders) : 0;
     const todo: Todo = {
       id: nanoid(),
       title,
@@ -292,16 +295,21 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       completedDayKeys: [],
     };
     set((s) => ({ todos: [todo, ...s.todos] }));
-    persistSingleTodo(todo);
+    void persistSingleTodo(todo).catch((error: unknown) => {
+      rollbackTodoState({ todos: previousTodos }, error);
+    });
   },
 
   updateTodo: (id, updates) => {
     set((s) => ({ todos: s.todos.map((t) => (t.id === id ? { ...t, ...updates } : t)) }));
     const updated = get().todos.find((t) => t.id === id);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => showErrorNotice(error));
+    }
   },
 
   toggleTodo: (id, dateKey) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== id) return t;
@@ -327,18 +335,27 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === id);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   deleteTodo: (id) => {
+    const previous = {
+      todos: get().todos,
+      editingTodoId: get().editingTodoId,
+    };
     set((s) => ({
       todos: s.todos.filter((t) => t.id !== id),
       editingTodoId: s.editingTodoId === id ? null : s.editingTodoId,
     }));
-    persistDeleteTodo(id);
+    void persistDeleteTodo(id).catch((error: unknown) => rollbackTodoState(previous, error));
   },
 
   reorderTodos: (activeId, overId, scopedIds) => {
+    const previousTodos = get().todos;
     set((s) => {
       const scopeSet = new Set(scopedIds ?? s.todos.map((todo) => todo.id));
       const scopedTodos = s.todos
@@ -358,15 +375,19 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       const nextOrderMap = new Map(reordered.map((todo, index) => [todo.id, orderSlots[index]]));
 
       return {
-        todos: s.todos.map((todo) =>
-          nextOrderMap.has(todo.id) ? { ...todo, order: nextOrderMap.get(todo.id)! } : todo,
-        ),
+        todos: s.todos.map((todo) => {
+          const nextOrder = nextOrderMap.get(todo.id);
+          return nextOrder === undefined ? todo : { ...todo, order: nextOrder };
+        }),
       };
     });
-    persistTodos(get().todos);
+    void persistTodos(get().todos).catch((error: unknown) => {
+      rollbackTodoState({ todos: previousTodos }, error);
+    });
   },
 
   reorderSubtasks: (todoId, activeId, overId) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -383,10 +404,18 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   archiveCompleted: () => {
+    const previous = {
+      todos: get().todos,
+      archivedTodos: get().archivedTodos,
+    };
     const done = get().todos.filter((t) => t.completed);
     if (done.length === 0) return;
     set((s) => {
@@ -396,10 +425,16 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         archivedTodos: [...s.archivedTodos, ...done],
       };
     });
-    persistArchiveTodos(done.map((t) => t.id));
+    void persistArchiveTodos(done.map((t) => t.id)).catch((error: unknown) =>
+      rollbackTodoState(previous, error),
+    );
   },
 
   archiveBoardCompleted: (boardDate) => {
+    const previous = {
+      todos: get().todos,
+      archivedTodos: get().archivedTodos,
+    };
     const todayK = getTodayDateKey();
     const isToday = boardDate === todayK;
     const done = get().todos.filter((t) => {
@@ -412,17 +447,23 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       todos: s.todos.filter((t) => !doneIds.has(t.id)),
       archivedTodos: [...s.archivedTodos, ...done],
     }));
-    persistArchiveTodos(done.map((t) => t.id));
+    void persistArchiveTodos(done.map((t) => t.id)).catch((error: unknown) =>
+      rollbackTodoState(previous, error),
+    );
   },
 
   removeTagFromAllTodos: (tagId) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => ({ ...t, tagIds: t.tagIds.filter((id) => id !== tagId) })),
     }));
-    persistTodos(get().todos);
+    void persistTodos(get().todos).catch((error: unknown) => {
+      rollbackTodoState({ todos: previousTodos }, error);
+    });
   },
 
   addSubtask: (todoId, title) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -435,10 +476,15 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   toggleSubtask: (todoId, subtaskId) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -451,10 +497,15 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   deleteSubtask: (todoId, subtaskId) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -462,10 +513,15 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   addTimeSlot: (todoId) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -474,10 +530,15 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   removeTimeSlot: (todoId, slotId) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -485,10 +546,15 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   updateTimeSlot: (todoId, slotId, updates) => {
+    const previousTodos = get().todos;
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -499,10 +565,15 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
-    if (updated) persistSingleTodo(updated);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
   },
 
   importTodos: (incoming) => {
+    const previousTodos = get().todos;
     let count = 0;
     set((s) => {
       const existingMap = new Map(s.todos.map((t) => [t.id, t]));
@@ -518,11 +589,14 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }
       return { todos: Array.from(existingMap.values()) };
     });
-    persistTodos(get().todos);
+    void persistTodos(get().todos).catch((error: unknown) => {
+      rollbackTodoState({ todos: previousTodos }, error);
+    });
     return count;
   },
 
   importArchivedTodos: (incoming) => {
+    const previousArchivedTodos = get().archivedTodos;
     let count = 0;
     set((s) => {
       const existingMap = new Map(s.archivedTodos.map((t) => [t.id, t]));
@@ -538,11 +612,14 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }
       return { archivedTodos: Array.from(existingMap.values()) };
     });
-    persistArchivedTodos(get().archivedTodos);
+    void persistArchivedTodos(get().archivedTodos).catch((error: unknown) => {
+      rollbackTodoState({ archivedTodos: previousArchivedTodos }, error);
+    });
     return count;
   },
 
   splitOverdueSubtasks: (todayKey) => {
+    const previousTodos = get().todos;
     const yesterdayKey = shiftDateKey(todayKey, -1);
     set((s) => {
       const next: Todo[] = [];
@@ -587,6 +664,8 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }
       return { todos: next };
     });
-    persistTodos(get().todos);
+    void persistTodos(get().todos).catch((error: unknown) => {
+      rollbackTodoState({ todos: previousTodos }, error);
+    });
   },
 }));

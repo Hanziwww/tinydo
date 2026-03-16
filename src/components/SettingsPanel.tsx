@@ -3,6 +3,8 @@ import { isEnabled, enable, disable } from "@tauri-apps/plugin-autostart";
 import { t } from "@/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { exportAllData, importAllData } from "@/lib/export";
+import { parseError } from "@/lib/backend";
+import { showErrorNotice } from "@/lib/errorNotice";
 import { cn, formatHourLabel } from "@/lib/utils";
 
 export function SettingsPanel() {
@@ -341,7 +343,9 @@ export function SettingsPanel() {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={exportAllData}
+            onClick={() => {
+              void exportAllData().catch(showErrorNotice);
+            }}
             className="flex-1 border border-border bg-surface-2 py-3 text-[16px] font-medium text-text-1 transition-colors hover:bg-surface-3"
           >
             {t("settings.export", locale)}
@@ -359,8 +363,11 @@ export function SettingsPanel() {
                   });
                   setTimeout(() => setImportMsg(null), 3000);
                 }
-              } catch {
-                setImportMsg({ type: "error", text: t("settings.import.error", locale) });
+              } catch (error) {
+                setImportMsg({
+                  type: "error",
+                  text: parseError(error) || t("settings.import.error", locale),
+                });
                 setTimeout(() => setImportMsg(null), 3000);
               }
             }}

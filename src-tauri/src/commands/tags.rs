@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::db::{self, DbState};
 use crate::error::AppError;
-use crate::models::{Tag, TagGroup};
+use crate::models::{ensure_unique_ids, Tag, TagGroup};
 
 #[tauri::command]
 pub fn get_tags(state: State<'_, DbState>) -> Result<Vec<Tag>, AppError> {
@@ -15,6 +15,7 @@ pub fn get_tags(state: State<'_, DbState>) -> Result<Vec<Tag>, AppError> {
 
 #[tauri::command]
 pub fn save_tag(state: State<'_, DbState>, tag: Tag) -> Result<(), AppError> {
+    tag.validate()?;
     let conn = state
         .0
         .lock()
@@ -24,6 +25,7 @@ pub fn save_tag(state: State<'_, DbState>, tag: Tag) -> Result<(), AppError> {
 
 #[tauri::command]
 pub fn delete_tag(state: State<'_, DbState>, id: String) -> Result<(), AppError> {
+    ensure_unique_ids([id.as_str()], "标签 ID")?;
     let conn = state
         .0
         .lock()
@@ -42,6 +44,7 @@ pub fn get_tag_groups(state: State<'_, DbState>) -> Result<Vec<TagGroup>, AppErr
 
 #[tauri::command]
 pub fn save_tag_group(state: State<'_, DbState>, group: TagGroup) -> Result<(), AppError> {
+    group.validate()?;
     let conn = state
         .0
         .lock()
@@ -51,6 +54,7 @@ pub fn save_tag_group(state: State<'_, DbState>, group: TagGroup) -> Result<(), 
 
 #[tauri::command]
 pub fn delete_tag_group(state: State<'_, DbState>, id: String) -> Result<(), AppError> {
+    ensure_unique_ids([id.as_str()], "标签组 ID")?;
     let conn = state
         .0
         .lock()

@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import type { Tag, TagGroup } from "@/types";
 import { getRandomTagColor } from "@/lib/utils";
 import * as backend from "@/lib/backend";
+import { showErrorNotice } from "@/lib/errorNotice";
 
 interface TagState {
   tags: Tag[];
@@ -34,7 +35,14 @@ const SEED_TAGS: Tag[] = [
 
 export { SEED_TAGS, SEED_TAG_GROUPS };
 
-export const useTagStore = create<TagState>()((set) => ({
+type TagRollbackState = Pick<TagState, "tags" | "tagGroups">;
+
+function rollbackTagState(previous: Partial<TagRollbackState>, error: unknown) {
+  useTagStore.setState(previous);
+  showErrorNotice(error);
+}
+
+export const useTagStore = create<TagState>()((set, get) => ({
   tags: [],
   tagGroups: [],
   _hydrated: false,
@@ -44,7 +52,7 @@ export const useTagStore = create<TagState>()((set) => ({
   addTag: (name, groupId = null) => {
     const tag: Tag = { id: nanoid(), name, color: getRandomTagColor(), groupId };
     set((s) => ({ tags: [...s.tags, tag] }));
-    backend.saveTag(tag).catch((e: unknown) => console.error("Failed to save tag:", e));
+    void backend.saveTag(tag).catch((error: unknown) => showErrorNotice(error));
     return tag;
   },
 
@@ -52,24 +60,26 @@ export const useTagStore = create<TagState>()((set) => ({
     set((s) => {
       const tags = s.tags.map((t) => (t.id === id ? { ...t, ...updates } : t));
       const updated = tags.find((t) => t.id === id);
-      if (updated)
-        backend.saveTag(updated).catch((e: unknown) => console.error("Failed to save tag:", e));
+      if (updated) {
+        void backend.saveTag(updated).catch((error: unknown) => showErrorNotice(error));
+      }
       return { tags };
     });
   },
 
   deleteTag: (id) => {
+    const previousTags = get().tags;
     set((s) => ({ tags: s.tags.filter((t) => t.id !== id) }));
-    backend.deleteTag(id).catch((e: unknown) => console.error("Failed to delete tag:", e));
+    void backend
+      .deleteTag(id)
+      .catch((error: unknown) => rollbackTagState({ tags: previousTags }, error));
   },
 
   addTagGroup: (name) => {
     const group: TagGroup = { id: nanoid(), name, order: 0 };
     set((s) => {
       const updated = { ...group, order: s.tagGroups.length };
-      backend
-        .saveTagGroup(updated)
-        .catch((e: unknown) => console.error("Failed to save tag group:", e));
+      void backend.saveTagGroup(updated).catch((error: unknown) => showErrorNotice(error));
       return { tagGroups: [...s.tagGroups, updated] };
     });
     return group;
@@ -79,28 +89,35 @@ export const useTagStore = create<TagState>()((set) => ({
     set((s) => {
       const tagGroups = s.tagGroups.map((g) => (g.id === id ? { ...g, ...updates } : g));
       const updated = tagGroups.find((g) => g.id === id);
-      if (updated)
-        backend
-          .saveTagGroup(updated)
-          .catch((e: unknown) => console.error("Failed to save tag group:", e));
+      if (updated) {
+        void backend.saveTagGroup(updated).catch((error: unknown) => showErrorNotice(error));
+      }
       return { tagGroups };
     });
   },
 
   deleteTagGroup: (id) => {
-    set((s) => ({
-      tagGroups: s.tagGroups.filter((g) => g.id !== id),
-      tags: s.tags.map((t) => {
-        if (t.groupId === id) {
-          const updated = { ...t, groupId: null };
-          backend.saveTag(updated).catch((e: unknown) => console.error("Failed to save tag:", e));
-          return updated;
-        }
-        return t;
-      }),
-    }));
-    backend
-      .deleteTagGroup(id)
-      .catch((e: unknown) => console.error("Failed to delete tag group:", e));
+    const previous = {
+      tags: get().tags,
+      tagGroups: get().tagGroups,
+    };
+    const updatedTags = previous.tags.map((tag) =>
+      tag.groupId === id ? { ...tag, groupId: null } : tag,
+    );
+    const affectedTags = updatedTags.filter(
+      (tag) =>
+        tag.groupId === null &&
+        previous.tags.some((prev) => prev.id === tag.id && prev.groupId === id),
+    );
+
+    set({
+      tagGroups: previous.tagGroups.filter((group) => group.id !== id),
+      tags: updatedTags,
+    });
+
+    void Promise.all([
+      backend.deleteTagGroup(id),
+      ...affectedTags.map((tag) => backend.saveTag(tag)),
+    ]).catch((error: unknown) => rollbackTagState(previous, error));
   },
 }));

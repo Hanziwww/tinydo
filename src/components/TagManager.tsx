@@ -176,7 +176,7 @@ export function TagManager() {
           <select
             value={selectedGroupId || ""}
             onChange={(e) => setSelectedGroupId(e.target.value || null)}
-            className="bg-surface-2 px-1.5 py-1.5 text-xs text-text-2 outline-none"
+            className="min-w-0 max-w-[40%] truncate bg-surface-2 px-1.5 py-1.5 text-xs text-text-2 outline-none"
           >
             <option value="">{t("tag.ungrouped", locale)}</option>
             {tagGroups.map((g) => (

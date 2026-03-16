@@ -1,4 +1,70 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
+
+use crate::error::AppError;
+
+pub const MAX_ID_LEN: usize = 64;
+const MAX_REMINDER_MINS: i32 = 24 * 60;
+const MAX_DURATION_DAYS: u32 = 365;
+
+fn validate_id(value: &str, label: &str) -> Result<(), AppError> {
+    if value.trim().is_empty() {
+        return Err(AppError::custom(format!("{label}不能为空")));
+    }
+    if value.len() > MAX_ID_LEN {
+        return Err(AppError::custom(format!(
+            "{label}长度不能超过 {MAX_ID_LEN}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_name(value: &str, label: &str) -> Result<(), AppError> {
+    if value.trim().is_empty() {
+        return Err(AppError::custom(format!("{label}不能为空")));
+    }
+    Ok(())
+}
+
+fn validate_date_key(value: &str, label: &str) -> Result<(), AppError> {
+    if value.trim().is_empty() {
+        return Err(AppError::custom(format!("{label}不能为空")));
+    }
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| AppError::custom(format!("{label}格式无效")))?;
+    Ok(())
+}
+
+fn validate_hhmm(value: &str, label: &str) -> Result<(), AppError> {
+    let mut parts = value.split(':');
+    let hour = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .ok_or_else(|| AppError::custom(format!("{label}格式无效")))?;
+    let minute = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .ok_or_else(|| AppError::custom(format!("{label}格式无效")))?;
+    if parts.next().is_some() || hour > 23 || minute > 59 {
+        return Err(AppError::custom(format!("{label}格式无效")));
+    }
+    Ok(())
+}
+
+pub fn ensure_unique_ids<'a>(
+    ids: impl IntoIterator<Item = &'a str>,
+    label: &str,
+) -> Result<(), AppError> {
+    let mut seen = HashSet::new();
+    for id in ids {
+        validate_id(id, label)?;
+        if !seen.insert(id.to_string()) {
+            return Err(AppError::custom(format!("{label}不能重复")));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -9,12 +75,34 @@ pub struct SubTask {
     pub order: i64,
 }
 
+impl SubTask {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "子任务 ID")?;
+        validate_name(&self.title, "子任务标题")?;
+        if self.order < 0 {
+            return Err(AppError::custom("子任务顺序不能小于 0"));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeSlot {
     pub id: String,
     pub start: String,
     pub end: Option<String>,
+}
+
+impl TimeSlot {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "时间段 ID")?;
+        validate_hhmm(&self.start, "开始时间")?;
+        if let Some(end) = &self.end {
+            validate_hhmm(end, "结束时间")?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +123,56 @@ pub struct Todo {
     pub completed_day_keys: Vec<String>,
 }
 
+impl Todo {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "任务 ID")?;
+        validate_name(&self.title, "任务标题")?;
+        validate_date_key(&self.target_date, "任务日期")?;
+
+        if !(1..=4).contains(&self.difficulty) {
+            return Err(AppError::custom("任务难度必须在 1 到 4 之间"));
+        }
+        if !self.order.is_finite() {
+            return Err(AppError::custom("任务排序值无效"));
+        }
+        if !self.created_at.is_finite() || self.created_at < 0.0 {
+            return Err(AppError::custom("任务创建时间无效"));
+        }
+        if self.duration_days == 0 || self.duration_days > MAX_DURATION_DAYS {
+            return Err(AppError::custom(format!(
+                "任务持续天数必须在 1 到 {MAX_DURATION_DAYS} 之间"
+            )));
+        }
+        if let Some(reminder) = self.reminder_mins_before {
+            if !(0..=MAX_REMINDER_MINS).contains(&reminder) {
+                return Err(AppError::custom("提醒时间必须在 0 到 1440 分钟之间"));
+            }
+        }
+
+        ensure_unique_ids(self.tag_ids.iter().map(|id| id.as_str()), "标签 ID")?;
+        ensure_unique_ids(
+            self.time_slots.iter().map(|slot| slot.id.as_str()),
+            "时间段 ID",
+        )?;
+        ensure_unique_ids(
+            self.subtasks.iter().map(|subtask| subtask.id.as_str()),
+            "子任务 ID",
+        )?;
+
+        for slot in &self.time_slots {
+            slot.validate()?;
+        }
+        for subtask in &self.subtasks {
+            subtask.validate()?;
+        }
+        for completed_day in &self.completed_day_keys {
+            validate_date_key(completed_day, "完成日期")?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tag {
@@ -44,12 +182,32 @@ pub struct Tag {
     pub group_id: Option<String>,
 }
 
+impl Tag {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "标签 ID")?;
+        validate_name(&self.name, "标签名称")?;
+        validate_name(&self.color, "标签颜色")?;
+        if let Some(group_id) = &self.group_id {
+            validate_id(group_id, "标签组 ID")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagGroup {
     pub id: String,
     pub name: String,
     pub order: i64,
+}
+
+impl TagGroup {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "标签组 ID")?;
+        validate_name(&self.name, "标签组名称")?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +229,40 @@ pub struct Settings {
     pub mini_mode_position: Option<WindowPos>,
 }
 
+impl Settings {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_name(&self.theme, "主题")?;
+        validate_name(&self.locale, "语言")?;
+        if self.tomorrow_planning_unlock_hour > 23 {
+            return Err(AppError::custom("明日规划开放时间必须在 0 到 23 之间"));
+        }
+        if self.timeline_start_hour > 23 {
+            return Err(AppError::custom("时间轴开始时间必须在 0 到 23 之间"));
+        }
+        if !(1..=24).contains(&self.timeline_end_hour) {
+            return Err(AppError::custom("时间轴结束时间必须在 1 到 24 之间"));
+        }
+        if self.timeline_start_hour >= self.timeline_end_hour {
+            return Err(AppError::custom("时间轴开始时间必须早于结束时间"));
+        }
+        if !(0.0..=1.0).contains(&self.mini_fade_opacity) {
+            return Err(AppError::custom("Mini 模式透明度必须在 0 到 1 之间"));
+        }
+        if self.max_duration_days == 0 || self.max_duration_days > MAX_DURATION_DAYS {
+            return Err(AppError::custom(format!(
+                "最大持续天数必须在 1 到 {MAX_DURATION_DAYS} 之间"
+            )));
+        }
+        if let Some(rect) = &self.full_mode_rect {
+            rect.validate()?;
+        }
+        if let Some(pos) = &self.mini_mode_position {
+            pos.validate()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowRect {
@@ -80,11 +272,35 @@ pub struct WindowRect {
     pub y: f64,
 }
 
+impl WindowRect {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !self.w.is_finite()
+            || !self.h.is_finite()
+            || !self.x.is_finite()
+            || !self.y.is_finite()
+            || self.w <= 0.0
+            || self.h <= 0.0
+        {
+            return Err(AppError::custom("窗口尺寸或位置无效"));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowPos {
     pub x: f64,
     pub y: f64,
+}
+
+impl WindowPos {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !self.x.is_finite() || !self.y.is_finite() {
+            return Err(AppError::custom("窗口位置无效"));
+        }
+        Ok(())
+    }
 }
 
 impl Default for Settings {
@@ -189,6 +405,7 @@ mod tests {
         let parsed: Todo = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, "abc");
         assert_eq!(parsed.tag_ids, vec!["t1"]);
+        assert!(parsed.validate().is_ok());
     }
 
     #[test]
@@ -241,5 +458,40 @@ mod tests {
         let data: LegacyData = serde_json::from_str(json).unwrap();
         assert!(data.todos.is_empty());
         assert_eq!(data.settings.theme, "dark");
+    }
+
+    #[test]
+    fn todo_validate_rejects_empty_id() {
+        let todo = Todo {
+            id: "".into(),
+            title: "Bad".into(),
+            completed: false,
+            tag_ids: vec![],
+            difficulty: 2,
+            time_slots: vec![],
+            reminder_mins_before: None,
+            target_date: "2026-03-16".into(),
+            order: 0.0,
+            created_at: 1.0,
+            subtasks: vec![],
+            duration_days: 1,
+            completed_day_keys: vec![],
+        };
+        assert!(todo.validate().is_err());
+    }
+
+    #[test]
+    fn settings_validate_rejects_invalid_range() {
+        let settings = Settings {
+            timeline_start_hour: 20,
+            timeline_end_hour: 8,
+            ..Settings::default()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn ensure_unique_ids_rejects_duplicates() {
+        assert!(ensure_unique_ids(["a", "a"], "任务 ID").is_err());
     }
 }

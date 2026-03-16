@@ -5,6 +5,19 @@ import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 
+async function reloadImportedState() {
+  const [todos, archivedTodos, tags, tagGroups, settings] = await Promise.all([
+    backend.getTodos(false),
+    backend.getTodos(true),
+    backend.getTags(),
+    backend.getTagGroups(),
+    backend.getAllSettings(),
+  ]);
+  useTodoStore.getState()._hydrate(todos, archivedTodos);
+  useTagStore.getState()._hydrate(tags, tagGroups);
+  useSettingsStore.getState()._hydrate(settingsToStore(settings));
+}
+
 export async function exportAllData() {
   const filePath = await save({
     defaultPath: `tinydo-export-${new Date().toISOString().slice(0, 10)}.json`,
@@ -13,12 +26,7 @@ export async function exportAllData() {
 
   if (!filePath) return;
 
-  try {
-    await backend.exportData(filePath);
-  } catch (err) {
-    console.error("Export failed:", err);
-    throw err;
-  }
+  await backend.exportData(filePath);
 }
 
 export async function importAllData(): Promise<number> {
@@ -29,24 +37,13 @@ export async function importAllData(): Promise<number> {
 
   if (!filePath) return 0;
 
+  const result = await backend.importData(filePath);
+  const total = result.todosCount + result.archivedCount;
   try {
-    const result = await backend.importData(filePath);
-    const total = result.todosCount + result.archivedCount;
-
-    const [todos, archivedTodos, tags, tagGroups, settings] = await Promise.all([
-      backend.getTodos(false),
-      backend.getTodos(true),
-      backend.getTags(),
-      backend.getTagGroups(),
-      backend.getAllSettings(),
-    ]);
-    useTodoStore.getState()._hydrate(todos, archivedTodos);
-    useTagStore.getState()._hydrate(tags, tagGroups);
-    useSettingsStore.getState()._hydrate(settingsToStore(settings));
-
-    return total;
-  } catch (err) {
-    console.error("Import failed:", err);
-    throw err;
+    await reloadImportedState();
+  } catch {
+    await reloadImportedState();
   }
+
+  return total;
 }

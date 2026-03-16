@@ -29,7 +29,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { Timeline } from "@/components/Timeline";
 import { MiniMode } from "@/components/MiniMode";
 import { FadeTransition } from "@/components/FadeTransition";
-import { useReminders } from "@/hooks/useReminders";
+import { NoticeBanner } from "@/components/NoticeBanner";
 import { initBackendData, settingsToStore } from "@/lib/init";
 import { parseError } from "@/lib/backend";
 import type { PlanningBoard } from "@/types";
@@ -94,8 +94,6 @@ function App() {
   const setEditingId = useTodoStore((s) => s.setEditingTodoId);
   const todos = useTodoStore((s) => s.todos);
   const viewMode = useTodoStore((s) => s.viewMode);
-
-  useReminders();
 
   const todayD = getTodayDate(now);
   const todayK = getTodayDateKey(now);
@@ -209,6 +207,9 @@ function App() {
 
   return (
     <div ref={rootRef} className="h-full bg-surface-1">
+      <div className="pointer-events-none">
+        <NoticeBanner />
+      </div>
       <AnimatePresence mode="wait">
         {showSplash ? (
           <motion.div

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Theme, Locale } from "@/types";
 import * as backend from "@/lib/backend";
+import { showErrorNotice } from "@/lib/errorNotice";
 import { storeToSettings } from "@/lib/init";
 
 interface WindowRect {
@@ -71,9 +72,7 @@ function applyTheme(theme: Theme) {
 
 function persistSettings() {
   const s = useSettingsStore.getState();
-  backend.saveSettings(storeToSettings(s)).catch((e: unknown) => {
-    console.error("Failed to persist settings:", e);
-  });
+  return backend.saveSettings(storeToSettings(s));
 }
 
 export const useSettingsStore = create<SettingsState>()((set) => ({
@@ -101,57 +100,57 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
   setTheme: (theme) => {
     applyTheme(theme);
     set({ theme });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setLocale: (locale) => {
     set({ locale });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   toggleTimeline: () => {
     set((s) => ({ showTimeline: !s.showTimeline }));
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setTomorrowPlanningUnlockHour: (hour) => {
     set({ tomorrowPlanningUnlockHour: Math.min(23, Math.max(0, Math.round(hour))) });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setTimelineRange: (start, end) => {
     set({
       timelineStartHour: Math.max(0, Math.min(23, start)),
       timelineEndHour: Math.max(1, Math.min(24, end)),
     });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setUserName: (name) => {
     set({ userName: name });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setMiniAlwaysOnTop: (v) => {
     set({ miniAlwaysOnTop: v });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setMiniFadeOnBlur: (v) => {
     set({ miniFadeOnBlur: v });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setMiniFadeOpacity: (v) => {
     set({ miniFadeOpacity: Math.max(0.1, Math.min(1, v)) });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setEnableSubtasks: (v) => {
     set({ enableSubtasks: v });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setMaxDurationDays: (v) => {
     set({ maxDurationDays: Math.max(1, Math.min(7, Math.round(v))) });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setFullModeRect: (rect) => {
     set({ fullModeRect: rect });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
   setMiniModePosition: (pos) => {
     set({ miniModePosition: pos });
-    persistSettings();
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
 }));

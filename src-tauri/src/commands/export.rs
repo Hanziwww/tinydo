@@ -1,8 +1,13 @@
-use tauri::State;
+use serde::Deserialize;
+use tauri::{AppHandle, State};
 
 use crate::db::{self, DbState};
 use crate::error::AppError;
-use crate::models::{ExportEnvelope, ExportSettings, ImportResult, Tag, TagGroup, Todo};
+use crate::models::{
+    ensure_unique_ids, ExportEnvelope, ExportSettings, ImportResult, Settings, SubTask, Tag,
+    TagGroup, TimeSlot, Todo,
+};
+use crate::reminders;
 
 #[tauri::command]
 pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), AppError> {
@@ -42,230 +47,425 @@ pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), A
     Ok(())
 }
 
-fn normalize_todo(raw: &serde_json::Value) -> Result<Todo, AppError> {
-    let obj = raw
-        .as_object()
-        .ok_or_else(|| AppError::custom("Todo entry is not an object"))?;
-
-    let id = obj
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let title = obj
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let completed = obj
-        .get("completed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let tag_ids = obj
-        .get("tagIds")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let difficulty = obj.get("difficulty").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
-
-    let time_slots = obj
-        .get("timeSlots")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|sl| {
-                    let o = sl.as_object()?;
-                    Some(crate::models::TimeSlot {
-                        id: o.get("id")?.as_str().unwrap_or("ts").to_string(),
-                        start: o.get("start")?.as_str().unwrap_or("09:00").to_string(),
-                        end: o.get("end").and_then(|v| v.as_str()).map(String::from),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let reminder_mins_before = obj
-        .get("reminderMinsBefore")
-        .and_then(|v| v.as_i64())
-        .map(|v| v as i32);
-
-    let target_date = obj
-        .get("targetDate")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let order = obj.get("order").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-    let created_at = obj.get("createdAt").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-    let subtasks = obj
-        .get("subtasks")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .enumerate()
-                .filter_map(|(i, st)| {
-                    let o = st.as_object()?;
-                    Some(crate::models::SubTask {
-                        id: o.get("id")?.as_str().unwrap_or("st").to_string(),
-                        title: o.get("title")?.as_str().unwrap_or("").to_string(),
-                        completed: o
-                            .get("completed")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        order: o.get("order").and_then(|v| v.as_i64()).unwrap_or(i as i64),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let duration_days = obj
-        .get("durationDays")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1) as u32;
-
-    let completed_day_keys = obj
-        .get("completedDayKeys")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(Todo {
-        id,
-        title,
-        completed,
-        tag_ids,
-        difficulty,
-        time_slots,
-        reminder_mins_before,
-        target_date,
-        order,
-        created_at,
-        subtasks,
-        duration_days,
-        completed_day_keys,
-    })
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedSubTask {
+    id: String,
+    title: String,
+    #[serde(default)]
+    completed: bool,
+    #[serde(default)]
+    order: i64,
 }
 
-#[tauri::command]
-pub fn import_data(state: State<'_, DbState>, file_path: String) -> Result<ImportResult, AppError> {
-    if file_path.is_empty() {
-        return Err(AppError::custom("File path is empty"));
+impl From<ImportedSubTask> for SubTask {
+    fn from(value: ImportedSubTask) -> Self {
+        Self {
+            id: value.id,
+            title: value.title,
+            completed: value.completed,
+            order: value.order,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedTimeSlot {
+    id: String,
+    start: String,
+    #[serde(default)]
+    end: Option<String>,
+}
+
+impl From<ImportedTimeSlot> for TimeSlot {
+    fn from(value: ImportedTimeSlot) -> Self {
+        Self {
+            id: value.id,
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+fn default_difficulty() -> u8 {
+    2
+}
+
+fn default_duration_days() -> u32 {
+    1
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedTodo {
+    id: String,
+    title: String,
+    #[serde(default)]
+    completed: bool,
+    #[serde(default)]
+    tag_ids: Vec<String>,
+    #[serde(default = "default_difficulty")]
+    difficulty: u8,
+    #[serde(default)]
+    time_slots: Vec<ImportedTimeSlot>,
+    #[serde(default)]
+    reminder_mins_before: Option<i32>,
+    target_date: String,
+    #[serde(default)]
+    order: f64,
+    #[serde(default)]
+    created_at: f64,
+    #[serde(default)]
+    subtasks: Vec<ImportedSubTask>,
+    #[serde(default = "default_duration_days")]
+    duration_days: u32,
+    #[serde(default)]
+    completed_day_keys: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct ImportSettingsPatch {
+    theme: Option<String>,
+    locale: Option<String>,
+    show_timeline: Option<bool>,
+    tomorrow_planning_unlock_hour: Option<u32>,
+}
+
+impl ImportSettingsPatch {
+    fn is_empty(&self) -> bool {
+        self.theme.is_none()
+            && self.locale.is_none()
+            && self.show_timeline.is_none()
+            && self.tomorrow_planning_unlock_hour.is_none()
+    }
+}
+
+#[derive(Debug)]
+struct ParsedImportPayload {
+    todos: Vec<Todo>,
+    archived_todos: Vec<Todo>,
+    tags: Vec<Tag>,
+    tag_groups: Vec<TagGroup>,
+    settings_patch: ImportSettingsPatch,
+}
+
+fn get_optional_array_field<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    label: &str,
+) -> Result<Option<&'a Vec<serde_json::Value>>, AppError> {
+    match obj.get(key) {
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| AppError::custom(format!("{label}必须是数组")))
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_string_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    label: &str,
+) -> Result<Option<String>, AppError> {
+    match obj.get(key) {
+        Some(value) => value
+            .as_str()
+            .map(|v| Some(v.to_string()))
+            .ok_or_else(|| AppError::custom(format!("{label}格式无效"))),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_bool_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    label: &str,
+) -> Result<Option<bool>, AppError> {
+    match obj.get(key) {
+        Some(value) => value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| AppError::custom(format!("{label}格式无效"))),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_u32_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    label: &str,
+) -> Result<Option<u32>, AppError> {
+    match obj.get(key) {
+        Some(value) => {
+            let raw = value
+                .as_u64()
+                .ok_or_else(|| AppError::custom(format!("{label}格式无效")))?;
+            let converted =
+                u32::try_from(raw).map_err(|_| AppError::custom(format!("{label}超出范围")))?;
+            Ok(Some(converted))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_settings_patch(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ImportSettingsPatch, AppError> {
+    let mut patch = ImportSettingsPatch {
+        theme: parse_optional_string_field(obj, "theme", "导入主题")?,
+        locale: parse_optional_string_field(obj, "locale", "导入语言")?,
+        show_timeline: parse_optional_bool_field(obj, "showTimeline", "导入 showTimeline")?,
+        tomorrow_planning_unlock_hour: parse_optional_u32_field(
+            obj,
+            "tomorrowPlanningUnlockHour",
+            "导入 tomorrowPlanningUnlockHour",
+        )?,
+    };
+    if let Some(hour) = patch.tomorrow_planning_unlock_hour {
+        if hour > 23 {
+            return Err(AppError::custom(
+                "导入 tomorrowPlanningUnlockHour 必须在 0 到 23 之间",
+            ));
+        }
+        patch.tomorrow_planning_unlock_hour = Some(hour);
+    }
+    Ok(patch)
+}
+
+fn normalize_todo(raw: &serde_json::Value) -> Result<Todo, AppError> {
+    let imported: ImportedTodo = serde_json::from_value(raw.clone())?;
+    let todo = Todo {
+        id: imported.id,
+        title: imported.title,
+        completed: imported.completed,
+        tag_ids: imported.tag_ids,
+        difficulty: imported.difficulty,
+        time_slots: imported.time_slots.into_iter().map(Into::into).collect(),
+        reminder_mins_before: imported.reminder_mins_before,
+        target_date: imported.target_date,
+        order: imported.order,
+        created_at: imported.created_at,
+        subtasks: imported.subtasks.into_iter().map(Into::into).collect(),
+        duration_days: imported.duration_days,
+        completed_day_keys: imported.completed_day_keys,
+    };
+    todo.validate()?;
+    Ok(todo)
+}
+
+fn validate_import_payload(
+    todos: &[Todo],
+    archived_todos: &[Todo],
+    tags: &[Tag],
+    tag_groups: &[TagGroup],
+) -> Result<(), AppError> {
+    ensure_unique_ids(todos.iter().map(|todo| todo.id.as_str()), "任务 ID")?;
+    ensure_unique_ids(
+        archived_todos.iter().map(|todo| todo.id.as_str()),
+        "已归档任务 ID",
+    )?;
+    ensure_unique_ids(tags.iter().map(|tag| tag.id.as_str()), "标签 ID")?;
+    ensure_unique_ids(
+        tag_groups.iter().map(|group| group.id.as_str()),
+        "标签组 ID",
+    )?;
+
+    let archived_ids = archived_todos
+        .iter()
+        .map(|todo| todo.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for todo in todos {
+        if archived_ids.contains(todo.id.as_str()) {
+            return Err(AppError::custom("导入数据中存在重复的任务 ID"));
+        }
     }
 
-    let raw = std::fs::read_to_string(&file_path)?;
-    let data: serde_json::Value = serde_json::from_str(&raw)?;
+    let group_ids = tag_groups
+        .iter()
+        .map(|group| group.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for tag in tags {
+        if let Some(group_id) = &tag.group_id {
+            if !group_ids.contains(group_id.as_str()) {
+                return Err(AppError::custom(format!(
+                    "标签 {} 引用了不存在的标签组 {}",
+                    tag.id, group_id
+                )));
+            }
+        }
+    }
 
+    Ok(())
+}
+
+fn parse_import_payload(data: &serde_json::Value) -> Result<ParsedImportPayload, AppError> {
     let obj = data
         .as_object()
-        .ok_or_else(|| AppError::custom("Invalid format: not a JSON object"))?;
+        .ok_or_else(|| AppError::custom("导入文件不是有效的 JSON 对象"))?;
+
+    let version = obj
+        .get("version")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| AppError::custom("导入文件缺少 version"))?;
+    if version != "2.0" {
+        return Err(AppError::custom(format!("暂不支持导入版本 {version}")));
+    }
 
     let todos_arr = obj
         .get("todos")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| AppError::custom("Invalid format: missing todos array"))?;
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| AppError::custom("导入文件缺少 todos 数组"))?;
+
+    let archived_arr = get_optional_array_field(obj, "archivedTodos", "archivedTodos")?;
+    let tags_arr = get_optional_array_field(obj, "tags", "tags")?;
+    let groups_arr = get_optional_array_field(obj, "tagGroups", "tagGroups")?;
+    let settings_patch = match obj.get("settings") {
+        Some(value) => parse_settings_patch(
+            value
+                .as_object()
+                .ok_or_else(|| AppError::custom("settings 必须是对象"))?,
+        )?,
+        None => ImportSettingsPatch::default(),
+    };
+
+    let todos = todos_arr
+        .iter()
+        .map(normalize_todo)
+        .collect::<Result<Vec<_>, _>>()?;
+    let archived_todos = match archived_arr {
+        Some(arr) => arr
+            .iter()
+            .map(normalize_todo)
+            .collect::<Result<Vec<_>, _>>()?,
+        None => Vec::new(),
+    };
+    let tags = match tags_arr {
+        Some(arr) => arr
+            .iter()
+            .map(|raw_tag| {
+                let tag: Tag = serde_json::from_value(raw_tag.clone())?;
+                tag.validate()?;
+                Ok(tag)
+            })
+            .collect::<Result<Vec<_>, AppError>>()?,
+        None => Vec::new(),
+    };
+    let tag_groups = match groups_arr {
+        Some(arr) => arr
+            .iter()
+            .map(|raw_group| {
+                let group: TagGroup = serde_json::from_value(raw_group.clone())?;
+                group.validate()?;
+                Ok(group)
+            })
+            .collect::<Result<Vec<_>, AppError>>()?,
+        None => Vec::new(),
+    };
+
+    validate_import_payload(&todos, &archived_todos, &tags, &tag_groups)?;
+
+    Ok(ParsedImportPayload {
+        todos,
+        archived_todos,
+        tags,
+        tag_groups,
+        settings_patch,
+    })
+}
+
+fn merge_settings_patch(
+    conn: &rusqlite::Connection,
+    patch: &ImportSettingsPatch,
+) -> Result<Option<Settings>, AppError> {
+    if patch.is_empty() {
+        return Ok(None);
+    }
+
+    let mut settings = db::get_settings(conn)?;
+    if let Some(theme) = &patch.theme {
+        settings.theme = theme.clone();
+    }
+    if let Some(locale) = &patch.locale {
+        settings.locale = locale.clone();
+    }
+    if let Some(show_timeline) = patch.show_timeline {
+        settings.show_timeline = show_timeline;
+    }
+    if let Some(hour) = patch.tomorrow_planning_unlock_hour {
+        settings.tomorrow_planning_unlock_hour = hour;
+    }
+    settings.validate()?;
+
+    Ok(Some(settings))
+}
+
+fn import_json_to_db(
+    conn: &rusqlite::Connection,
+    json: &serde_json::Value,
+) -> Result<ImportResult, AppError> {
+    let parsed = parse_import_payload(json)?;
+    let merged_settings = merge_settings_patch(conn, &parsed.settings_patch)?;
+
+    db::replace_import_data(
+        conn,
+        &parsed.todos,
+        &parsed.archived_todos,
+        &parsed.tags,
+        &parsed.tag_groups,
+        merged_settings.as_ref(),
+    )?;
+
+    Ok(ImportResult {
+        todos_count: parsed.todos.len(),
+        archived_count: parsed.archived_todos.len(),
+        tags_count: parsed.tags.len(),
+        tag_groups_count: parsed.tag_groups.len(),
+        settings_updated: merged_settings.is_some(),
+    })
+}
+
+fn into_import_failure(err: AppError) -> AppError {
+    AppError::custom(format!("导入失败：{}。未写入任何变更", err.user_message()))
+}
+
+#[tauri::command]
+pub fn import_data(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    file_path: String,
+) -> Result<ImportResult, AppError> {
+    if file_path.trim().is_empty() {
+        return Err(AppError::custom(
+            "导入失败：文件路径不能为空。未写入任何变更",
+        ));
+    }
+
+    let raw =
+        std::fs::read_to_string(&file_path).map_err(|error| into_import_failure(error.into()))?;
+    let data: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|error| into_import_failure(error.into()))?;
 
     let conn = state
         .0
         .lock()
         .map_err(|e| AppError::custom(e.to_string()))?;
-
-    // Replace mode: clear existing data before importing
-    db::clear_todos(&conn)?;
-    db::clear_tags(&conn)?;
-    db::clear_tag_groups(&conn)?;
-
-    let mut todos_count = 0;
-    for raw_todo in todos_arr {
-        let todo = normalize_todo(raw_todo)?;
-        db::save_todo(&conn, &todo, false)?;
-        todos_count += 1;
-    }
-
-    let mut archived_count = 0;
-    if let Some(archived_arr) = obj.get("archivedTodos").and_then(|v| v.as_array()) {
-        for raw_todo in archived_arr {
-            let todo = normalize_todo(raw_todo)?;
-            db::save_todo(&conn, &todo, true)?;
-            archived_count += 1;
-        }
-    }
-
-    // Import tags
-    let mut tags_count = 0;
-    if let Some(tags_arr) = obj.get("tags").and_then(|v| v.as_array()) {
-        for raw_tag in tags_arr {
-            let tag: Tag = serde_json::from_value(raw_tag.clone())?;
-            db::save_tag(&conn, &tag)?;
-            tags_count += 1;
-        }
-    }
-
-    // Import tag groups
-    let mut tag_groups_count = 0;
-    if let Some(groups_arr) = obj.get("tagGroups").and_then(|v| v.as_array()) {
-        for raw_group in groups_arr {
-            let group: TagGroup = serde_json::from_value(raw_group.clone())?;
-            db::save_tag_group(&conn, &group)?;
-            tag_groups_count += 1;
-        }
-    }
-
-    // Import settings (merge: patch exported fields onto current settings)
-    let mut settings_updated = false;
-    if let Some(settings_obj) = obj.get("settings").and_then(|v| v.as_object()) {
-        let mut settings = db::get_settings(&conn)?;
-        if let Some(v) = settings_obj.get("theme").and_then(|v| v.as_str()) {
-            settings.theme = v.to_string();
-        }
-        if let Some(v) = settings_obj.get("locale").and_then(|v| v.as_str()) {
-            settings.locale = v.to_string();
-        }
-        if let Some(v) = settings_obj.get("showTimeline").and_then(|v| v.as_bool()) {
-            settings.show_timeline = v;
-        }
-        if let Some(v) = settings_obj
-            .get("tomorrowPlanningUnlockHour")
-            .and_then(|v| v.as_u64())
-        {
-            settings.tomorrow_planning_unlock_hour = v as u32;
-        }
-        db::save_settings(&conn, &settings)?;
-        settings_updated = true;
-    }
+    let result = import_json_to_db(&conn, &data).map_err(into_import_failure)?;
+    drop(conn);
+    reminders::reschedule_all(&app);
 
     log::info!(
         "Data imported from {}: {} todos, {} archived, {} tags, {} tag groups, settings={}",
         file_path,
-        todos_count,
-        archived_count,
-        tags_count,
-        tag_groups_count,
-        settings_updated
+        result.todos_count,
+        result.archived_count,
+        result.tags_count,
+        result.tag_groups_count,
+        result.settings_updated
     );
 
-    Ok(ImportResult {
-        todos_count,
-        archived_count,
-        tags_count,
-        tag_groups_count,
-        settings_updated,
-    })
+    Ok(result)
 }
 
 #[tauri::command]
@@ -420,80 +620,6 @@ mod tests {
         })
     }
 
-    /// Write JSON to a temp file then call the import logic against an in-memory DB.
-    fn import_json_to_db(conn: &Connection, json: &serde_json::Value) -> ImportResult {
-        let obj = json.as_object().unwrap();
-
-        db::clear_todos(conn).unwrap();
-        db::clear_tags(conn).unwrap();
-        db::clear_tag_groups(conn).unwrap();
-
-        let todos_arr = obj.get("todos").and_then(|v| v.as_array()).unwrap();
-        let mut todos_count = 0;
-        for raw in todos_arr {
-            let todo = normalize_todo(raw).unwrap();
-            db::save_todo(conn, &todo, false).unwrap();
-            todos_count += 1;
-        }
-
-        let mut archived_count = 0;
-        if let Some(arr) = obj.get("archivedTodos").and_then(|v| v.as_array()) {
-            for raw in arr {
-                let todo = normalize_todo(raw).unwrap();
-                db::save_todo(conn, &todo, true).unwrap();
-                archived_count += 1;
-            }
-        }
-
-        let mut tags_count = 0;
-        if let Some(arr) = obj.get("tags").and_then(|v| v.as_array()) {
-            for raw in arr {
-                let tag: Tag = serde_json::from_value(raw.clone()).unwrap();
-                db::save_tag(conn, &tag).unwrap();
-                tags_count += 1;
-            }
-        }
-
-        let mut tag_groups_count = 0;
-        if let Some(arr) = obj.get("tagGroups").and_then(|v| v.as_array()) {
-            for raw in arr {
-                let group: TagGroup = serde_json::from_value(raw.clone()).unwrap();
-                db::save_tag_group(conn, &group).unwrap();
-                tag_groups_count += 1;
-            }
-        }
-
-        let mut settings_updated = false;
-        if let Some(settings_obj) = obj.get("settings").and_then(|v| v.as_object()) {
-            let mut settings = db::get_settings(conn).unwrap();
-            if let Some(v) = settings_obj.get("theme").and_then(|v| v.as_str()) {
-                settings.theme = v.to_string();
-            }
-            if let Some(v) = settings_obj.get("locale").and_then(|v| v.as_str()) {
-                settings.locale = v.to_string();
-            }
-            if let Some(v) = settings_obj.get("showTimeline").and_then(|v| v.as_bool()) {
-                settings.show_timeline = v;
-            }
-            if let Some(v) = settings_obj
-                .get("tomorrowPlanningUnlockHour")
-                .and_then(|v| v.as_u64())
-            {
-                settings.tomorrow_planning_unlock_hour = v as u32;
-            }
-            db::save_settings(conn, &settings).unwrap();
-            settings_updated = true;
-        }
-
-        ImportResult {
-            todos_count,
-            archived_count,
-            tags_count,
-            tag_groups_count,
-            settings_updated,
-        }
-    }
-
     #[test]
     fn crc32_known_value() {
         let crc = crc32(b"pHYs");
@@ -533,7 +659,8 @@ mod tests {
     fn normalize_todo_missing_fields() {
         let val: serde_json::Value = serde_json::json!({
             "id": "t2",
-            "title": "Sparse"
+            "title": "Sparse",
+            "targetDate": "2026-03-16"
         });
         let todo = normalize_todo(&val).unwrap();
         assert_eq!(todo.id, "t2");
@@ -548,7 +675,7 @@ mod tests {
     fn import_roundtrip_todos() {
         let conn = test_conn();
         let envelope = sample_envelope();
-        let result = import_json_to_db(&conn, &envelope);
+        let result = import_json_to_db(&conn, &envelope).unwrap();
 
         assert_eq!(result.todos_count, 1);
         assert_eq!(result.archived_count, 1);
@@ -570,7 +697,7 @@ mod tests {
     fn import_roundtrip_tags_and_groups() {
         let conn = test_conn();
         let envelope = sample_envelope();
-        let result = import_json_to_db(&conn, &envelope);
+        let result = import_json_to_db(&conn, &envelope).unwrap();
 
         assert_eq!(result.tags_count, 2);
         assert_eq!(result.tag_groups_count, 1);
@@ -590,7 +717,7 @@ mod tests {
     fn import_roundtrip_settings() {
         let conn = test_conn();
         let envelope = sample_envelope();
-        let result = import_json_to_db(&conn, &envelope);
+        let result = import_json_to_db(&conn, &envelope).unwrap();
 
         assert!(result.settings_updated);
 
@@ -638,7 +765,7 @@ mod tests {
 
         // Import replaces everything
         let envelope = sample_envelope();
-        import_json_to_db(&conn, &envelope);
+        import_json_to_db(&conn, &envelope).unwrap();
 
         let tags = db::get_tags(&conn).unwrap();
         assert_eq!(tags.len(), 2);
@@ -709,7 +836,7 @@ mod tests {
 
         let json_str = serde_json::to_string(&envelope).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        import_json_to_db(&conn, &parsed);
+        import_json_to_db(&conn, &parsed).unwrap();
 
         let todos = db::get_todos(&conn, false).unwrap();
         assert_eq!(todos.len(), 1);
@@ -736,6 +863,7 @@ mod tests {
         let val = serde_json::json!({
             "id": "t3",
             "title": "Extra",
+            "targetDate": "2026-03-16",
             "unknownField": "should be ignored",
             "anotherUnknown": 42
         });
@@ -749,14 +877,12 @@ mod tests {
         let val = serde_json::json!({
             "id": "t4",
             "title": "TypeMix",
+            "targetDate": "2026-03-16",
             "completed": "not a bool",
             "difficulty": "high",
             "durationDays": "three"
         });
-        let todo = normalize_todo(&val).unwrap();
-        assert!(!todo.completed);
-        assert_eq!(todo.difficulty, 2);
-        assert_eq!(todo.duration_days, 1);
+        assert!(normalize_todo(&val).is_err());
     }
 
     #[test]
@@ -767,12 +893,22 @@ mod tests {
     }
 
     #[test]
+    fn normalize_todo_requires_target_date() {
+        let val = serde_json::json!({
+            "id": "t5",
+            "title": "Missing date"
+        });
+        assert!(normalize_todo(&val).is_err());
+    }
+
+    #[test]
     fn import_missing_optional_sections() {
         let conn = test_conn();
         let minimal = serde_json::json!({
-            "todos": [{"id": "m1", "title": "Minimal"}]
+            "version": "2.0",
+            "todos": [{"id": "m1", "title": "Minimal", "targetDate": "2026-03-16"}]
         });
-        let result = import_json_to_db(&conn, &minimal);
+        let result = import_json_to_db(&conn, &minimal).unwrap();
 
         assert_eq!(result.todos_count, 1);
         assert_eq!(result.archived_count, 0);
@@ -785,18 +921,91 @@ mod tests {
     fn import_empty_arrays() {
         let conn = test_conn();
         let empty = serde_json::json!({
+            "version": "2.0",
             "todos": [],
             "archivedTodos": [],
             "tags": [],
             "tagGroups": [],
             "settings": {}
         });
-        let result = import_json_to_db(&conn, &empty);
+        let result = import_json_to_db(&conn, &empty).unwrap();
 
         assert_eq!(result.todos_count, 0);
         assert_eq!(result.archived_count, 0);
         assert_eq!(result.tags_count, 0);
         assert_eq!(result.tag_groups_count, 0);
-        assert!(result.settings_updated);
+        assert!(!result.settings_updated);
+    }
+
+    #[test]
+    fn import_rejects_duplicate_todo_ids() {
+        let conn = test_conn();
+        let envelope = serde_json::json!({
+            "version": "2.0",
+            "todos": [
+                {"id": "dup", "title": "A", "targetDate": "2026-03-16"},
+                {"id": "dup", "title": "B", "targetDate": "2026-03-16"}
+            ]
+        });
+        assert!(import_json_to_db(&conn, &envelope).is_err());
+    }
+
+    #[test]
+    fn import_rejects_missing_tag_group_reference() {
+        let conn = test_conn();
+        let envelope = serde_json::json!({
+            "version": "2.0",
+            "todos": [],
+            "tags": [
+                {"id": "tag1", "name": "Work", "color": "#ff0000", "groupId": "missing"}
+            ],
+            "tagGroups": []
+        });
+        assert!(import_json_to_db(&conn, &envelope).is_err());
+    }
+
+    #[test]
+    fn import_validation_failure_keeps_old_data() {
+        let conn = test_conn();
+        db::save_todo(
+            &conn,
+            &Todo {
+                id: "old".into(),
+                title: "Keep me".into(),
+                completed: false,
+                tag_ids: vec![],
+                difficulty: 2,
+                time_slots: vec![],
+                reminder_mins_before: None,
+                target_date: "2026-03-16".into(),
+                order: 0.0,
+                created_at: 1.0,
+                subtasks: vec![],
+                duration_days: 1,
+                completed_day_keys: vec![],
+            },
+            false,
+        )
+        .unwrap();
+
+        let envelope = serde_json::json!({
+            "version": "2.0",
+            "todos": [{"id": "", "title": "Broken", "targetDate": "2026-03-16"}]
+        });
+        assert!(import_json_to_db(&conn, &envelope).is_err());
+
+        let todos = db::get_todos(&conn, false).unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].id, "old");
+    }
+
+    #[test]
+    fn import_requires_supported_version() {
+        let conn = test_conn();
+        let envelope = serde_json::json!({
+            "version": "1.0",
+            "todos": []
+        });
+        assert!(import_json_to_db(&conn, &envelope).is_err());
     }
 }
