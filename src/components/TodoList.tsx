@@ -33,7 +33,7 @@ export function TodoList({ board, boardDate }: Props) {
 
   const filtered = useMemo(() => {
     let list = todos.filter((td) => {
-      const dur = td.durationDays ?? 1;
+      const dur = td.durationDays;
       const endDate = shiftDateKey(td.targetDate, dur - 1);
       if (board === "today") {
         return td.targetDate <= todayK;
@@ -50,9 +50,9 @@ export function TodoList({ board, boardDate }: Props) {
   const effectiveBoardDate = board === "today" ? todayK : boardDate;
 
   const isDayCompleted = useCallback(
-    (td: { completed: boolean; durationDays: number; completedDayKeys?: string[] }) => {
-      if ((td.durationDays ?? 1) > 1) {
-        return (td.completedDayKeys ?? []).includes(effectiveBoardDate);
+    (td: { completed: boolean; durationDays: number; completedDayKeys: string[] }) => {
+      if (td.durationDays > 1) {
+        return td.completedDayKeys.includes(effectiveBoardDate);
       }
       return td.completed;
     },
@@ -63,10 +63,10 @@ export function TodoList({ board, boardDate }: Props) {
     () => filtered.filter((td) => !isDayCompleted(td)).sort((a, b) => a.order - b.order),
     [filtered, isDayCompleted],
   );
-  const completed = filtered
-    .filter((td) => isDayCompleted(td))
-    .sort((a, b) => a.order - b.order);
-  const odN = active.filter((td) => getOverdueDays(td.targetDate, todayK) > 0).length;
+  const completed = filtered.filter((td) => isDayCompleted(td)).sort((a, b) => a.order - b.order);
+  const odN = active.filter(
+    (td) => getOverdueDays(td.targetDate, todayK, td.durationDays) > 0,
+  ).length;
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeTodo = useMemo(

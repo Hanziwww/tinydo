@@ -40,7 +40,7 @@ export function TodoInput({ board, targetDate, disabled = false }: Props) {
       tg.name.toLowerCase().includes(search.toLowerCase()) && !sel.some((s) => s.id === tg.id),
   );
 
-  function submit(e: React.FormEvent) {
+  function submit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (disabled) return;
     const v = title.trim();
@@ -121,9 +121,11 @@ export function TodoInput({ board, targetDate, disabled = false }: Props) {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      filtered.length > 0
-                        ? pick(filtered[0])
-                        : search.trim() && pick(addTag(search.trim()));
+                      if (filtered.length > 0) {
+                        pick(filtered[0]);
+                      } else if (search.trim()) {
+                        pick(addTag(search.trim()));
+                      }
                     }
                   }}
                 />

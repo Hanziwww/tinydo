@@ -1,13 +1,20 @@
 import { useCallback, useMemo, useRef } from "react";
 import { Archive, ImageDown } from "lucide-react";
 import { t } from "@/i18n";
-import { cn, formatDate, getOverdueDays, getTodayDateKey, getTodayDate, getTomorrowDate } from "@/lib/utils";
+import {
+  cn,
+  formatDate,
+  getOverdueDays,
+  getTodayDateKey,
+  getTodayDate,
+  getTomorrowDate,
+} from "@/lib/utils";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { PosterPreview } from "@/components/PosterPreview";
 import { exportPoster } from "@/lib/poster";
-import type { PlanningBoard, ViewMode, Locale } from "@/types";
+import type { PlanningBoard, ViewMode } from "@/types";
 
 const VIEWS: { value: ViewMode; key: string }[] = [
   { value: "all", key: "view.all" },
@@ -26,7 +33,7 @@ export function StatusBar({ board, boardDate }: Props) {
   const archiveBoardCompleted = useTodoStore((s) => s.archiveBoardCompleted);
   const filterTagIds = useTodoStore((s) => s.filterTagIds);
   const tags = useTagStore((s) => s.tags);
-  const locale = useSettingsStore((s) => s.locale) as Locale;
+  const locale = useSettingsStore((s) => s.locale);
   const theme = useSettingsStore((s) => s.theme);
   const todayK = getTodayDateKey();
   const posterRef = useRef<HTMLDivElement>(null);
@@ -43,7 +50,7 @@ export function StatusBar({ board, boardDate }: Props) {
   const activeN = scoped.filter((td) => !td.completed).length;
   const doneN = scoped.filter((td) => td.completed).length;
   const odN = scoped.filter(
-    (td) => !td.completed && getOverdueDays(td.targetDate, todayK) > 0,
+    (td) => !td.completed && getOverdueDays(td.targetDate, todayK, td.durationDays) > 0,
   ).length;
 
   const posterTitle =

@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Check, ChevronRight, Maximize2, Pin, PinOff, X } from "lucide-react";
-import { cn, formatTime, getOverdueDays, getTodayDateKey, DIFFICULTY_CONFIG } from "@/lib/utils";
+import {
+  cn,
+  formatTimeSlots,
+  getOverdueDays,
+  getTodayDateKey,
+  DIFFICULTY_CONFIG,
+} from "@/lib/utils";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { Difficulty } from "@/types";
-
 interface Props {
   onExpand: () => void;
 }
@@ -33,6 +37,7 @@ export function MiniMode({ onExpand }: Props) {
       todos
         .filter((td) => {
           if (td.completed) return false;
+          if (td.durationDays > 1 && td.completedDayKeys.includes(todayK)) return false;
           return td.targetDate <= todayK;
         })
         .sort((a, b) => a.order - b.order),
@@ -40,11 +45,11 @@ export function MiniMode({ onExpand }: Props) {
   );
 
   const overdueTodos = useMemo(
-    () => activeTodos.filter((td) => getOverdueDays(td.targetDate, todayK) > 0),
+    () => activeTodos.filter((td) => getOverdueDays(td.targetDate, todayK, td.durationDays) > 0),
     [activeTodos, todayK],
   );
   const todayTodos = useMemo(
-    () => activeTodos.filter((td) => getOverdueDays(td.targetDate, todayK) === 0),
+    () => activeTodos.filter((td) => getOverdueDays(td.targetDate, todayK, td.durationDays) === 0),
     [activeTodos, todayK],
   );
   const overdueN = overdueTodos.length;
@@ -79,14 +84,10 @@ export function MiniMode({ onExpand }: Props) {
   const containerOpacity = fadeOnBlur && !focused ? fadeOpacity : 1;
 
   const renderTask = (td: (typeof activeTodos)[0], isOverdue: boolean, todayIndex?: number) => {
-    const diff = DIFFICULTY_CONFIG[td.difficulty as Difficulty];
-    const od = getOverdueDays(td.targetDate, todayK);
-    const time = td.timeStart
-      ? td.timeEnd
-        ? `${formatTime(td.timeStart)}-${formatTime(td.timeEnd)}`
-        : formatTime(td.timeStart)
-      : null;
-    const subs = td.subtasks ?? [];
+    const diff = DIFFICULTY_CONFIG[td.difficulty];
+    const od = getOverdueDays(td.targetDate, todayK, td.durationDays);
+    const time = formatTimeSlots(td.timeSlots);
+    const subs = td.subtasks;
     const hasSubs = enableSubtasks && subs.length > 0;
     const expanded = expandedIds.has(td.id);
     const doneCount = subs.filter((st) => st.completed).length;
@@ -117,7 +118,7 @@ export function MiniMode({ onExpand }: Props) {
           <button
             type="button"
             onClick={() => {
-              const dur = td.durationDays ?? 1;
+              const dur = td.durationDays;
               toggle(td.id, dur > 1 ? todayK : undefined);
             }}
             className={cn(

@@ -1,8 +1,8 @@
 import { forwardRef } from "react";
 import { Check } from "lucide-react";
-import { DIFFICULTY_CONFIG, formatTime, hexToRgba } from "@/lib/utils";
+import { DIFFICULTY_CONFIG, formatTimeSlots, hexToRgba } from "@/lib/utils";
 import { t } from "@/i18n";
-import type { Todo, Difficulty, Locale } from "@/types";
+import type { Todo, Locale } from "@/types";
 
 interface Tag {
   id: string;
@@ -23,7 +23,13 @@ function LogoSvg({ dark }: { dark: boolean }) {
   const fill = dark ? "#050505" : "#F5F5F5";
   const stroke = dark ? "#F5F5F5" : "#18181b";
   return (
-    <svg width="18" height="18" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 512 512"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
       <rect x="24" y="24" width="464" height="464" rx="120" fill={fill} />
       <g
         transform="translate(12 0)"
@@ -111,11 +117,14 @@ export const PosterPreview = forwardRef<HTMLDivElement, Props>(
             <span>{dateLabel}</span>
             <span style={{ color: borderColor }}>|</span>
             <span>
-              <strong style={{ color: accentColor }}>{todos.length}</strong> {t("poster.total", locale)}
+              <strong style={{ color: accentColor }}>{todos.length}</strong>{" "}
+              {t("poster.total", locale)}
               {" · "}
-              <strong style={{ color: "#22c55e" }}>{completed.length}</strong> {t("poster.done", locale)}
+              <strong style={{ color: "#22c55e" }}>{completed.length}</strong>{" "}
+              {t("poster.done", locale)}
               {" · "}
-              <strong style={{ color: textPrimary }}>{active.length}</strong> {t("poster.pending", locale)}
+              <strong style={{ color: textPrimary }}>{active.length}</strong>{" "}
+              {t("poster.pending", locale)}
             </span>
           </div>
         </div>
@@ -199,9 +208,7 @@ export const PosterPreview = forwardRef<HTMLDivElement, Props>(
               TinyDo
             </span>
           </div>
-          <span style={{ fontSize: 11, color: textMuted }}>
-            {t("poster.watermark", locale)}
-          </span>
+          <span style={{ fontSize: 11, color: textMuted }}>{t("poster.watermark", locale)}</span>
         </div>
       </div>
     );
@@ -233,14 +240,10 @@ function PosterTask({
   borderColor: string;
   accentColor: string;
 }) {
-  const diff = DIFFICULTY_CONFIG[todo.difficulty as Difficulty];
+  const diff = DIFFICULTY_CONFIG[todo.difficulty];
   const todoTags = tags.filter((tg) => todo.tagIds.includes(tg.id));
-  const time = todo.timeStart
-    ? todo.timeEnd
-      ? `${formatTime(todo.timeStart)} - ${formatTime(todo.timeEnd)}`
-      : formatTime(todo.timeStart)
-    : null;
-  const subs = todo.subtasks ?? [];
+  const time = formatTimeSlots(todo.timeSlots);
+  const subs = todo.subtasks;
   const doneCount = subs.filter((st) => st.completed).length;
 
   return (
@@ -329,9 +332,7 @@ function PosterTask({
           >
             {t(`diff.${todo.difficulty}`, locale)}
           </span>
-          {time && (
-            <span style={{ fontSize: 12, color: textSecondary }}>{time}</span>
-          )}
+          {time && <span style={{ fontSize: 12, color: textSecondary }}>{time}</span>}
           {todoTags.map((tg) => (
             <span
               key={tg.id}

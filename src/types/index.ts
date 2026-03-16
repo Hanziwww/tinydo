@@ -19,14 +19,19 @@ export interface SubTask {
   order: number;
 }
 
+export interface TimeSlot {
+  id: string;
+  start: string;
+  end: string | null;
+}
+
 export interface Todo {
   id: string;
   title: string;
   completed: boolean;
   tagIds: string[];
   difficulty: Difficulty;
-  timeStart: string | null;
-  timeEnd: string | null;
+  timeSlots: TimeSlot[];
   reminderMinsBefore: number | null;
   targetDate: string;
   order: number;

@@ -1,12 +1,11 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
-import { cn, DIFFICULTY_CONFIG, formatTime, hexToRgba } from "@/lib/utils";
+import { cn, DIFFICULTY_CONFIG, formatTimeSlots, hexToRgba } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { TagBadge } from "./TagBadge";
-import type { Difficulty } from "@/types";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -41,8 +40,12 @@ export function HistoryPanel() {
     const map = new Map<string, typeof archivedTodos>();
     for (const td of archivedTodos) {
       const key = td.targetDate;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(td);
+      const existing = map.get(key);
+      if (existing) {
+        existing.push(td);
+      } else {
+        map.set(key, [td]);
+      }
     }
     return map;
   }, [archivedTodos]);
@@ -80,7 +83,7 @@ export function HistoryPanel() {
           year: "numeric",
         });
 
-  const selectedTodos = selectedDate ? archivedByDate.get(selectedDate) ?? [] : [];
+  const selectedTodos = selectedDate ? (archivedByDate.get(selectedDate) ?? []) : [];
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
@@ -111,10 +114,7 @@ export function HistoryPanel() {
 
         <div className="grid grid-cols-7 gap-px">
           {weekdays.map((wd) => (
-            <div
-              key={wd}
-              className="py-1.5 text-center text-[12px] font-medium text-text-3"
-            >
+            <div key={wd} className="py-1.5 text-center text-[12px] font-medium text-text-3">
               {wd}
             </div>
           ))}
@@ -169,13 +169,9 @@ export function HistoryPanel() {
             </p>
           ) : (
             selectedTodos.map((td) => {
-              const diff = DIFFICULTY_CONFIG[td.difficulty as Difficulty];
+              const diff = DIFFICULTY_CONFIG[td.difficulty];
               const todoTags = tags.filter((tg) => td.tagIds.includes(tg.id));
-              const time = td.timeStart
-                ? td.timeEnd
-                  ? `${formatTime(td.timeStart)} - ${formatTime(td.timeEnd)}`
-                  : formatTime(td.timeStart)
-                : null;
+              const time = formatTimeSlots(td.timeSlots);
               return (
                 <div
                   key={td.id}
@@ -185,9 +181,7 @@ export function HistoryPanel() {
                     <Check size={10} strokeWidth={3} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[15px] leading-snug text-text-1 line-through">
-                      {td.title}
-                    </p>
+                    <p className="text-[15px] leading-snug text-text-1 line-through">{td.title}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <span
                         className="inline-flex items-center gap-1 px-2 py-0.5 text-[13px] font-medium"
@@ -196,20 +190,15 @@ export function HistoryPanel() {
                           color: diff.color,
                         }}
                       >
-                        <span
-                          className="h-1.5 w-1.5"
-                          style={{ backgroundColor: diff.color }}
-                        />
+                        <span className="h-1.5 w-1.5" style={{ backgroundColor: diff.color }} />
                         {t(`diff.${td.difficulty}`, locale)}
                       </span>
-                      {time && (
-                        <span className="text-[13px] text-text-3">{time}</span>
-                      )}
+                      {time && <span className="text-[13px] text-text-3">{time}</span>}
                       {todoTags.map((tg) => (
                         <TagBadge key={tg.id} tag={tg} />
                       ))}
                     </div>
-                    {td.subtasks && td.subtasks.length > 0 && (
+                    {td.subtasks.length > 0 && (
                       <div className="mt-1.5 ml-1 space-y-0.5">
                         {td.subtasks.map((st) => (
                           <div key={st.id} className="flex items-center gap-2">

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { isEnabled, enable, disable } from "@tauri-apps/plugin-autostart";
 import { t } from "@/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { exportAllData, importAllData } from "@/lib/export";
@@ -8,6 +9,28 @@ export function SettingsPanel() {
   const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(
     null,
   );
+  const [autostart, setAutostart] = useState(false);
+
+  useEffect(() => {
+    isEnabled()
+      .then(setAutostart)
+      .catch(() => setAutostart(false));
+  }, []);
+
+  const toggleAutostart = async () => {
+    try {
+      if (autostart) {
+        await disable();
+        setAutostart(false);
+      } else {
+        await enable();
+        setAutostart(true);
+      }
+    } catch (e) {
+      console.error("Failed to toggle autostart:", e);
+    }
+  };
+
   const theme = useSettingsStore((s) => s.theme);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const locale = useSettingsStore((s) => s.locale);
@@ -22,6 +45,9 @@ export function SettingsPanel() {
 
   const userName = useSettingsStore((s) => s.userName);
   const setUserName = useSettingsStore((s) => s.setUserName);
+  const miniAlwaysOnTop = useSettingsStore((s) => s.miniAlwaysOnTop);
+  const miniFadeOnBlur = useSettingsStore((s) => s.miniFadeOnBlur);
+  const miniFadeOpacity = useSettingsStore((s) => s.miniFadeOpacity);
 
   const enableSubtasks = useSettingsStore((s) => s.enableSubtasks);
   const setEnableSubtasks = useSettingsStore((s) => s.setEnableSubtasks);
@@ -209,7 +235,7 @@ export function SettingsPanel() {
             <button
               type="button"
               role="switch"
-              aria-checked={useSettingsStore.getState().miniAlwaysOnTop}
+              aria-checked={miniAlwaysOnTop}
               onClick={() =>
                 useSettingsStore
                   .getState()
@@ -217,15 +243,13 @@ export function SettingsPanel() {
               }
               className={cn(
                 "relative inline-flex h-7 w-12 items-center border transition-colors",
-                useSettingsStore((s) => s.miniAlwaysOnTop)
-                  ? "border-accent bg-accent"
-                  : "border-border bg-surface-2",
+                miniAlwaysOnTop ? "border-accent bg-accent" : "border-border bg-surface-2",
               )}
             >
               <span
                 className={cn(
                   "inline-block h-5 w-5 bg-white shadow transition-transform",
-                  useSettingsStore((s) => s.miniAlwaysOnTop) ? "translate-x-6" : "translate-x-0.5",
+                  miniAlwaysOnTop ? "translate-x-6" : "translate-x-0.5",
                 )}
               />
             </button>
@@ -237,7 +261,7 @@ export function SettingsPanel() {
             <button
               type="button"
               role="switch"
-              aria-checked={useSettingsStore.getState().miniFadeOnBlur}
+              aria-checked={miniFadeOnBlur}
               onClick={() =>
                 useSettingsStore
                   .getState()
@@ -245,20 +269,18 @@ export function SettingsPanel() {
               }
               className={cn(
                 "relative inline-flex h-7 w-12 items-center border transition-colors",
-                useSettingsStore((s) => s.miniFadeOnBlur)
-                  ? "border-accent bg-accent"
-                  : "border-border bg-surface-2",
+                miniFadeOnBlur ? "border-accent bg-accent" : "border-border bg-surface-2",
               )}
             >
               <span
                 className={cn(
                   "inline-block h-5 w-5 bg-white shadow transition-transform",
-                  useSettingsStore((s) => s.miniFadeOnBlur) ? "translate-x-6" : "translate-x-0.5",
+                  miniFadeOnBlur ? "translate-x-6" : "translate-x-0.5",
                 )}
               />
             </button>
           </div>
-          {useSettingsStore((s) => s.miniFadeOnBlur) && (
+          {miniFadeOnBlur && (
             <div className="flex items-center justify-between">
               <span className="text-[15px] text-text-2">
                 {t("settings.mini.fade_opacity", locale)}
@@ -268,18 +290,49 @@ export function SettingsPanel() {
                 min="10"
                 max="90"
                 step="5"
-                value={Math.round(useSettingsStore((s) => s.miniFadeOpacity) * 100)}
+                value={Math.round(miniFadeOpacity * 100)}
                 onChange={(e) =>
                   useSettingsStore.getState().setMiniFadeOpacity(Number(e.target.value) / 100)
                 }
                 className="w-24"
               />
               <span className="w-10 text-right text-[14px] text-text-3">
-                {Math.round(useSettingsStore((s) => s.miniFadeOpacity) * 100)}%
+                {Math.round(miniFadeOpacity * 100)}%
               </span>
             </div>
           )}
         </div>
+      </div>
+      <div>
+        <label className="mb-2.5 block text-[15px] font-medium text-text-2">
+          {t("settings.autostart", locale)}
+        </label>
+        <div className="flex items-center justify-between">
+          <span className="text-[15px] text-text-2">{t("settings.autostart.desc", locale)}</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autostart}
+            onClick={() => void toggleAutostart()}
+            className={cn(
+              "relative inline-flex h-7 w-12 items-center border transition-colors",
+              autostart ? "border-accent bg-accent" : "border-border bg-surface-2",
+            )}
+          >
+            <span
+              className={cn(
+                "inline-block h-5 w-5 bg-white shadow transition-transform",
+                autostart ? "translate-x-6" : "translate-x-0.5",
+              )}
+            />
+          </button>
+        </div>
+      </div>
+      <div>
+        <label className="mb-2.5 block text-[15px] font-medium text-text-2">
+          {t("settings.shortcut", locale)}
+        </label>
+        <p className="text-[15px] text-text-3">{t("settings.shortcut.desc", locale)}</p>
       </div>
       <div>
         <label className="mb-2.5 block text-[15px] font-medium text-text-2">

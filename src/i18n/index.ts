@@ -42,10 +42,11 @@ const translations: Record<Locale, Record<string, string>> = {
     "detail.title": "任务详情",
     "detail.name": "任务名称",
     "detail.difficulty": "难度",
-    "detail.time_mode": "时间模式",
+    "detail.time_mode": "时间",
     "detail.time_point": "时间点",
     "detail.time_range": "时间段",
     "detail.time_none": "不设置",
+    "detail.add_time_slot": "添加时间",
     "detail.start": "开始",
     "detail.end": "结束",
     "detail.tags": "标签",
@@ -97,6 +98,10 @@ const translations: Record<Locale, Record<string, string>> = {
     "duration.done_n": "{n}天已完成",
     "settings.subtasks": "子任务功能",
     "settings.max_duration": "最大持续天数",
+    "settings.autostart": "开机自启动",
+    "settings.autostart.desc": "开机时自动启动 TinyDo",
+    "settings.shortcut": "全局快捷键",
+    "settings.shortcut.desc": "Ctrl+Shift+T 显示/隐藏窗口",
     "todo.priority_hint": "↑ 优先级最高",
     "app.greeting_history": "任务归档记录",
     "history.select_date": "选择日期查看归档任务",
@@ -154,6 +159,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "detail.time_point": "Point",
     "detail.time_range": "Range",
     "detail.time_none": "None",
+    "detail.add_time_slot": "Add time slot",
     "detail.start": "Start",
     "detail.end": "End",
     "detail.tags": "Tags",
@@ -206,6 +212,10 @@ const translations: Record<Locale, Record<string, string>> = {
     "duration.done_n": "{n}d done",
     "settings.subtasks": "Subtasks",
     "settings.max_duration": "Max duration (days)",
+    "settings.autostart": "Launch at startup",
+    "settings.autostart.desc": "Auto-start TinyDo when you log in",
+    "settings.shortcut": "Global shortcut",
+    "settings.shortcut.desc": "Ctrl+Shift+T to show/hide window",
     "todo.priority_hint": "↑ Highest priority",
     "app.greeting_history": "Task Archive",
     "history.select_date": "Select a date to view archived tasks",
@@ -221,7 +231,7 @@ const translations: Record<Locale, Record<string, string>> = {
 };
 
 export function t(key: string, locale: Locale, params?: Record<string, string | number>): string {
-  let str = translations[locale]?.[key] ?? key;
+  let str = translations[locale][key] ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       str = str.replace(`{${k}}`, String(v));

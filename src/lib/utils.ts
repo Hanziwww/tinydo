@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { Difficulty, Locale } from "@/types";
+import type { Difficulty, Locale, TimeSlot } from "@/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -45,14 +45,17 @@ export function getTomorrowDateKey(base = new Date()): string {
   return toDateKey(getTomorrowDate(base));
 }
 
-export function getOverdueDays(targetDate: string, todayDate = getTodayDateKey()): number {
-  if (targetDate >= todayDate) {
-    return 0;
-  }
+export function getOverdueDays(
+  targetDate: string,
+  todayDate = getTodayDateKey(),
+  durationDays = 1,
+): number {
+  const endDate = durationDays > 1 ? shiftDateKey(targetDate, durationDays - 1) : targetDate;
+  if (endDate >= todayDate) return 0;
 
-  const target = fromDateKey(targetDate);
+  const end = fromDateKey(endDate);
   const today = fromDateKey(todayDate);
-  const diffMs = today.getTime() - target.getTime();
+  const diffMs = today.getTime() - end.getTime();
   return Math.max(0, Math.round(diffMs / 86400000));
 }
 
@@ -136,6 +139,11 @@ export const DIFFICULTY_CONFIG: Record<Difficulty, { color: string; darkColor: s
 
 export function formatTime(time: string | null): string {
   return time ?? "";
+}
+
+export function formatTimeSlots(slots: TimeSlot[]): string | null {
+  if (slots.length === 0) return null;
+  return slots.map((s) => (s.end ? `${s.start} - ${s.end}` : s.start)).join(", ");
 }
 
 export function timeToMinutes(time: string): number {

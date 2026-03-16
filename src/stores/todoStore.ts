@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
-import type { Todo, ViewMode, Difficulty } from "@/types";
+import type { Todo, ViewMode, Difficulty, TimeSlot } from "@/types";
 import { getTodayDateKey, getTomorrowDateKey, shiftDateKey } from "@/lib/utils";
+import * as backend from "@/lib/backend";
 
 interface TodoState {
   todos: Todo[];
@@ -10,6 +10,8 @@ interface TodoState {
   viewMode: ViewMode;
   filterTagIds: string[];
   editingTodoId: string | null;
+  _hydrated: boolean;
+  _hydrate: (todos: Todo[], archivedTodos: Todo[]) => void;
   setViewMode: (mode: ViewMode) => void;
   toggleFilterTag: (tagId: string) => void;
   clearFilterTags: () => void;
@@ -26,9 +28,32 @@ interface TodoState {
   addSubtask: (todoId: string, title: string) => void;
   toggleSubtask: (todoId: string, subtaskId: string) => void;
   deleteSubtask: (todoId: string, subtaskId: string) => void;
+  addTimeSlot: (todoId: string) => void;
+  removeTimeSlot: (todoId: string, slotId: string) => void;
+  updateTimeSlot: (todoId: string, slotId: string, updates: Partial<Omit<TimeSlot, "id">>) => void;
   splitOverdueSubtasks: (todayKey: string) => void;
   importTodos: (incoming: Todo[]) => number;
   importArchivedTodos: (incoming: Todo[]) => number;
+}
+
+function persistTodos(todos: Todo[]) {
+  backend.saveTodos(todos, false).catch((e: unknown) => console.error("Failed to persist todos:", e));
+}
+
+function persistArchivedTodos(archived: Todo[]) {
+  backend.saveTodos(archived, true).catch((e: unknown) => console.error("Failed to persist archived:", e));
+}
+
+function persistSingleTodo(todo: Todo, archived = false) {
+  backend.saveTodo(todo, archived).catch((e: unknown) => console.error("Failed to persist todo:", e));
+}
+
+function persistDeleteTodo(id: string) {
+  backend.deleteTodo(id).catch((e: unknown) => console.error("Failed to delete todo:", e));
+}
+
+function persistArchiveTodos(ids: string[]) {
+  backend.archiveTodos(ids).catch((e: unknown) => console.error("Failed to archive todos:", e));
 }
 
 const now = Date.now();
@@ -44,8 +69,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-code", "tag-audio"],
     difficulty: 4,
-    timeStart: null,
-    timeEnd: null,
+    timeSlots: [],
     reminderMinsBefore: null,
     targetDate: twoDaysAgoKey,
     order: 0,
@@ -60,8 +84,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-paper", "tag-audio"],
     difficulty: 3,
-    timeStart: null,
-    timeEnd: null,
+    timeSlots: [],
     reminderMinsBefore: null,
     targetDate: yesterdayKey,
     order: 1,
@@ -81,8 +104,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-code", "tag-lab"],
     difficulty: 3,
-    timeStart: "09:00",
-    timeEnd: "11:00",
+    timeSlots: [{ id: "ts3a", start: "09:00", end: "11:00" }],
     reminderMinsBefore: 5,
     targetDate: todayKey,
     order: 2,
@@ -101,8 +123,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-paper", "tag-audio"],
     difficulty: 3,
-    timeStart: "13:30",
-    timeEnd: "15:00",
+    timeSlots: [{ id: "ts4a", start: "13:30", end: "15:00" }],
     reminderMinsBefore: 5,
     targetDate: todayKey,
     order: 3,
@@ -122,8 +143,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-code"],
     difficulty: 2,
-    timeStart: "16:00",
-    timeEnd: null,
+    timeSlots: [{ id: "ts5a", start: "16:00", end: null }],
     reminderMinsBefore: null,
     targetDate: todayKey,
     order: 4,
@@ -138,8 +158,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-errand"],
     difficulty: 1,
-    timeStart: "18:00",
-    timeEnd: null,
+    timeSlots: [{ id: "ts6a", start: "18:00", end: null }],
     reminderMinsBefore: null,
     targetDate: todayKey,
     order: 5,
@@ -158,8 +177,7 @@ const SEED_TODOS: Todo[] = [
     completed: true,
     tagIds: ["tag-health"],
     difficulty: 2,
-    timeStart: "07:00",
-    timeEnd: "07:40",
+    timeSlots: [{ id: "ts7a", start: "07:00", end: "07:40" }],
     reminderMinsBefore: null,
     targetDate: todayKey,
     order: 6,
@@ -174,8 +192,7 @@ const SEED_TODOS: Todo[] = [
     completed: true,
     tagIds: ["tag-lab", "tag-audio"],
     difficulty: 1,
-    timeStart: "11:30",
-    timeEnd: "12:00",
+    timeSlots: [{ id: "ts8a", start: "11:30", end: "12:00" }],
     reminderMinsBefore: null,
     targetDate: todayKey,
     order: 7,
@@ -190,8 +207,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-paper", "tag-audio"],
     difficulty: 2,
-    timeStart: "10:00",
-    timeEnd: "11:30",
+    timeSlots: [{ id: "ts9a", start: "10:00", end: "11:30" }],
     reminderMinsBefore: 5,
     targetDate: tomorrowKey,
     order: 8,
@@ -211,8 +227,7 @@ const SEED_TODOS: Todo[] = [
     completed: false,
     tagIds: ["tag-health"],
     difficulty: 2,
-    timeStart: "19:00",
-    timeEnd: "20:00",
+    timeSlots: [{ id: "ts10a", start: "19:00", end: "20:00" }],
     reminderMinsBefore: 10,
     targetDate: tomorrowKey,
     order: 9,
@@ -227,302 +242,347 @@ const SEED_TODOS: Todo[] = [
   },
 ];
 
-export const useTodoStore = create<TodoState>()(
-  persist(
-    (set, get) => ({
-      todos: SEED_TODOS,
-      archivedTodos: [],
-      viewMode: "all" as ViewMode,
-      filterTagIds: [],
-      editingTodoId: null,
+export { SEED_TODOS };
 
-      setViewMode: (mode) => set({ viewMode: mode }),
-      setEditingTodoId: (id) => set({ editingTodoId: id }),
+export const useTodoStore = create<TodoState>()((set, get) => ({
+  todos: [],
+  archivedTodos: [],
+  viewMode: "all" as ViewMode,
+  filterTagIds: [],
+  editingTodoId: null,
+  _hydrated: false,
 
-      toggleFilterTag: (tagId) =>
-        set((s) => ({
-          filterTagIds: s.filterTagIds.includes(tagId)
-            ? s.filterTagIds.filter((id) => id !== tagId)
-            : [...s.filterTagIds, tagId],
-        })),
+  _hydrate: (todos, archivedTodos) => set({ todos, archivedTodos, _hydrated: true }),
 
-      clearFilterTags: () => set({ filterTagIds: [] }),
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setEditingTodoId: (id) => set({ editingTodoId: id }),
 
-      addTodo: (title, tagIds = [], targetDate = getTodayDateKey()) => {
-        const todos = get().todos;
-        const minOrder =
-          todos.length > 0 ? Math.min(...todos.filter((t) => !t.completed).map((t) => t.order)) : 0;
-        const todo: Todo = {
-          id: nanoid(),
-          title,
-          completed: false,
-          tagIds,
-          difficulty: 2 as Difficulty,
-          timeStart: null,
-          timeEnd: null,
-          reminderMinsBefore: null,
-          targetDate,
-          order: minOrder - 1,
-          createdAt: Date.now(),
-          subtasks: [],
-          durationDays: 1,
-          completedDayKeys: [],
-        };
-        set((s) => ({ todos: [todo, ...s.todos] }));
-      },
+  toggleFilterTag: (tagId) =>
+    set((s) => ({
+      filterTagIds: s.filterTagIds.includes(tagId)
+        ? s.filterTagIds.filter((id) => id !== tagId)
+        : [...s.filterTagIds, tagId],
+    })),
 
-      updateTodo: (id, updates) =>
-        set((s) => ({ todos: s.todos.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
+  clearFilterTags: () => set({ filterTagIds: [] }),
 
-      toggleTodo: (id, dateKey) =>
-        set((s) => ({
-          todos: s.todos.map((t) => {
-            if (t.id !== id) return t;
-            const dur = t.durationDays ?? 1;
-            if (dur > 1 && dateKey) {
-              const keys = t.completedDayKeys ?? [];
-              const alreadyDone = keys.includes(dateKey);
-              const nextKeys = alreadyDone
-                ? keys.filter((k) => k !== dateKey)
-                : [...keys, dateKey];
-              const allDone = nextKeys.length >= dur;
-              return {
-                ...t,
-                completedDayKeys: nextKeys,
-                completed: allDone,
-                subtasks: allDone
-                  ? (t.subtasks ?? []).map((st) => ({ ...st, completed: true }))
-                  : (t.subtasks ?? []),
-              };
-            }
-            const next = !t.completed;
-            return {
-              ...t,
-              completed: next,
-              subtasks: next
-                ? (t.subtasks ?? []).map((st) => ({ ...st, completed: true }))
-                : (t.subtasks ?? []),
-            };
-          }),
-        })),
+  addTodo: (title, tagIds = [], targetDate = getTodayDateKey()) => {
+    const todos = get().todos;
+    const minOrder =
+      todos.length > 0 ? Math.min(...todos.filter((t) => !t.completed).map((t) => t.order)) : 0;
+    const todo: Todo = {
+      id: nanoid(),
+      title,
+      completed: false,
+      tagIds,
+      difficulty: 2 as Difficulty,
+      timeSlots: [],
+      reminderMinsBefore: null,
+      targetDate,
+      order: minOrder - 1,
+      createdAt: Date.now(),
+      subtasks: [],
+      durationDays: 1,
+      completedDayKeys: [],
+    };
+    set((s) => ({ todos: [todo, ...s.todos] }));
+    persistSingleTodo(todo);
+  },
 
-      deleteTodo: (id) =>
-        set((s) => ({
-          todos: s.todos.filter((t) => t.id !== id),
-          editingTodoId: s.editingTodoId === id ? null : s.editingTodoId,
-        })),
+  updateTodo: (id, updates) => {
+    set((s) => ({ todos: s.todos.map((t) => (t.id === id ? { ...t, ...updates } : t)) }));
+    const updated = get().todos.find((t) => t.id === id);
+    if (updated) persistSingleTodo(updated);
+  },
 
-      reorderTodos: (activeId, overId, scopedIds) => {
-        set((s) => {
-          const scopeSet = new Set(scopedIds ?? s.todos.map((todo) => todo.id));
-          const scopedTodos = s.todos
-            .filter((todo) => scopeSet.has(todo.id))
-            .slice()
-            .sort((a, b) => a.order - b.order);
-
-          const activeIdx = scopedTodos.findIndex((t) => t.id === activeId);
-          const overIdx = scopedTodos.findIndex((t) => t.id === overId);
-          if (activeIdx === -1 || overIdx === -1) return s;
-
-          const reordered = [...scopedTodos];
-          const [moved] = reordered.splice(activeIdx, 1);
-          reordered.splice(overIdx, 0, moved);
-
-          const orderSlots = scopedTodos.map((todo) => todo.order).sort((a, b) => a - b);
-          const nextOrderMap = new Map(
-            reordered.map((todo, index) => [todo.id, orderSlots[index]]),
-          );
-
+  toggleTodo: (id, dateKey) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== id) return t;
+        const dur = t.durationDays;
+        if (dur > 1 && dateKey) {
+          const keys = t.completedDayKeys;
+          const alreadyDone = keys.includes(dateKey);
+          const nextKeys = alreadyDone ? keys.filter((k) => k !== dateKey) : [...keys, dateKey];
+          const allDone = nextKeys.length >= dur;
           return {
-            todos: s.todos.map((todo) =>
-              nextOrderMap.has(todo.id) ? { ...todo, order: nextOrderMap.get(todo.id)! } : todo,
-            ),
+            ...t,
+            completedDayKeys: nextKeys,
+            completed: allDone,
+            subtasks: allDone ? t.subtasks.map((st) => ({ ...st, completed: true })) : t.subtasks,
           };
-        });
-      },
-
-      reorderSubtasks: (todoId, activeId, overId) => {
-        set((s) => ({
-          todos: s.todos.map((t) => {
-            if (t.id !== todoId) return t;
-            const subs = [...(t.subtasks ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-            const activeIdx = subs.findIndex((st) => st.id === activeId);
-            const overIdx = subs.findIndex((st) => st.id === overId);
-            if (activeIdx === -1 || overIdx === -1) return t;
-            const [moved] = subs.splice(activeIdx, 1);
-            subs.splice(overIdx, 0, moved);
-            return {
-              ...t,
-              subtasks: subs.map((st, i) => ({ ...st, order: i })),
-            };
-          }),
-        }));
-      },
-
-      archiveCompleted: () =>
-        set((s) => {
-          const done = s.todos.filter((t) => t.completed);
-          const remaining = s.todos.filter((t) => !t.completed);
-          return {
-            todos: remaining,
-            archivedTodos: [...s.archivedTodos, ...done],
-          };
-        }),
-
-      archiveBoardCompleted: (boardDate) =>
-        set((s) => {
-          const todayK = getTodayDateKey();
-          const isToday = boardDate === todayK;
-          const done = s.todos.filter((t) => {
-            if (!t.completed) return false;
-            return isToday ? t.targetDate <= todayK : t.targetDate === boardDate;
-          });
-          if (done.length === 0) return s;
-          const doneIds = new Set(done.map((t) => t.id));
-          return {
-            todos: s.todos.filter((t) => !doneIds.has(t.id)),
-            archivedTodos: [...s.archivedTodos, ...done],
-          };
-        }),
-
-      removeTagFromAllTodos: (tagId) =>
-        set((s) => ({
-          todos: s.todos.map((t) => ({ ...t, tagIds: t.tagIds.filter((id) => id !== tagId) })),
-        })),
-
-      addSubtask: (todoId, title) =>
-        set((s) => ({
-          todos: s.todos.map((t) => {
-            if (t.id !== todoId) return t;
-            const subs = t.subtasks ?? [];
-            const maxOrder = subs.length > 0 ? Math.max(...subs.map((st) => st.order ?? 0)) : -1;
-            return {
-              ...t,
-              subtasks: [...subs, { id: nanoid(), title, completed: false, order: maxOrder + 1 }],
-            };
-          }),
-        })),
-
-      toggleSubtask: (todoId, subtaskId) =>
-        set((s) => ({
-          todos: s.todos.map((t) => {
-            if (t.id !== todoId) return t;
-            const subs = t.subtasks ?? [];
-            return {
-              ...t,
-              subtasks: subs.map((st) =>
-                st.id === subtaskId ? { ...st, completed: !st.completed } : st,
-              ),
-            };
-          }),
-        })),
-
-      deleteSubtask: (todoId, subtaskId) =>
-        set((s) => ({
-          todos: s.todos.map((t) => {
-            if (t.id !== todoId) return t;
-            return { ...t, subtasks: (t.subtasks ?? []).filter((st) => st.id !== subtaskId) };
-          }),
-        })),
-
-      importTodos: (incoming) => {
-        let count = 0;
-        set((s) => {
-          const existingMap = new Map(s.todos.map((t) => [t.id, t]));
-          for (const t of incoming) {
-            existingMap.set(t.id, {
-              ...t,
-              subtasks: (t.subtasks ?? []).map((st, i) => ({ ...st, order: st.order ?? i })),
-              durationDays: t.durationDays ?? 1,
-              completedDayKeys: t.completedDayKeys ?? [],
-            });
-            count++;
-          }
-          return { todos: Array.from(existingMap.values()) };
-        });
-        return count;
-      },
-
-      importArchivedTodos: (incoming) => {
-        let count = 0;
-        set((s) => {
-          const existingMap = new Map(s.archivedTodos.map((t) => [t.id, t]));
-          for (const t of incoming) {
-            existingMap.set(t.id, {
-              ...t,
-              subtasks: (t.subtasks ?? []).map((st, i) => ({ ...st, order: st.order ?? i })),
-              durationDays: t.durationDays ?? 1,
-              completedDayKeys: t.completedDayKeys ?? [],
-            });
-            count++;
-          }
-          return { archivedTodos: Array.from(existingMap.values()) };
-        });
-        return count;
-      },
-
-      splitOverdueSubtasks: (todayKey) => {
-        const yesterdayKey = shiftDateKey(todayKey, -1);
-        set((s) => {
-          const next: Todo[] = [];
-          for (const td of s.todos) {
-            if (td.targetDate !== yesterdayKey) {
-              next.push(td);
-              continue;
-            }
-            const subs = td.subtasks ?? [];
-            if (subs.length === 0) {
-              next.push(td);
-              continue;
-            }
-            const done = subs.filter((st) => st.completed);
-            const pending = subs.filter((st) => !st.completed);
-            if (done.length > 0) {
-              next.push({
-                ...td,
-                id: nanoid(),
-                title: td.title,
-                completed: true,
-                subtasks: done,
-                targetDate: yesterdayKey,
-                completedDayKeys: td.completedDayKeys ?? [],
-              });
-            }
-            if (pending.length > 0) {
-              next.push({
-                ...td,
-                targetDate: todayKey,
-                completed: false,
-                subtasks: pending,
-                completedDayKeys: td.completedDayKeys ?? [],
-              });
-            } else if (done.length === 0) {
-              next.push({ ...td, targetDate: todayKey });
-            }
-          }
-          return { todos: next };
-        });
-      },
-    }),
-    {
-      name: "tinydo-todos",
-      version: 7,
-      partialize: (state) => ({ todos: state.todos, archivedTodos: state.archivedTodos }),
-      migrate: (persisted, prevVersion) => {
-        if (prevVersion < 6) {
-          return { todos: SEED_TODOS, archivedTodos: [] };
         }
-        const s = persisted as { todos?: Todo[]; archivedTodos?: Todo[] };
-        const migrateTodo = (t: Todo) => ({
+        const next = !t.completed;
+        return {
           ...t,
-          subtasks: (t.subtasks ?? []).map((st, i) => ({ ...st, order: st.order ?? i })),
-          durationDays: t.durationDays ?? 1,
-          completedDayKeys: t.completedDayKeys ?? [],
+          completed: next,
+          subtasks: next ? t.subtasks.map((st) => ({ ...st, completed: true })) : t.subtasks,
+        };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === id);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  deleteTodo: (id) => {
+    set((s) => ({
+      todos: s.todos.filter((t) => t.id !== id),
+      editingTodoId: s.editingTodoId === id ? null : s.editingTodoId,
+    }));
+    persistDeleteTodo(id);
+  },
+
+  reorderTodos: (activeId, overId, scopedIds) => {
+    set((s) => {
+      const scopeSet = new Set(scopedIds ?? s.todos.map((todo) => todo.id));
+      const scopedTodos = s.todos
+        .filter((todo) => scopeSet.has(todo.id))
+        .slice()
+        .sort((a, b) => a.order - b.order);
+
+      const activeIdx = scopedTodos.findIndex((t) => t.id === activeId);
+      const overIdx = scopedTodos.findIndex((t) => t.id === overId);
+      if (activeIdx === -1 || overIdx === -1) return s;
+
+      const reordered = [...scopedTodos];
+      const [moved] = reordered.splice(activeIdx, 1);
+      reordered.splice(overIdx, 0, moved);
+
+      const orderSlots = scopedTodos.map((todo) => todo.order).sort((a, b) => a - b);
+      const nextOrderMap = new Map(
+        reordered.map((todo, index) => [todo.id, orderSlots[index]]),
+      );
+
+      return {
+        todos: s.todos.map((todo) =>
+          nextOrderMap.has(todo.id) ? { ...todo, order: nextOrderMap.get(todo.id)! } : todo,
+        ),
+      };
+    });
+    persistTodos(get().todos);
+  },
+
+  reorderSubtasks: (todoId, activeId, overId) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        const subs = [...t.subtasks].sort((a, b) => a.order - b.order);
+        const activeIdx = subs.findIndex((st) => st.id === activeId);
+        const overIdx = subs.findIndex((st) => st.id === overId);
+        if (activeIdx === -1 || overIdx === -1) return t;
+        const [moved] = subs.splice(activeIdx, 1);
+        subs.splice(overIdx, 0, moved);
+        return {
+          ...t,
+          subtasks: subs.map((st, i) => ({ ...st, order: i })),
+        };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  archiveCompleted: () => {
+    const done = get().todos.filter((t) => t.completed);
+    if (done.length === 0) return;
+    set((s) => {
+      const remaining = s.todos.filter((t) => !t.completed);
+      return {
+        todos: remaining,
+        archivedTodos: [...s.archivedTodos, ...done],
+      };
+    });
+    persistArchiveTodos(done.map((t) => t.id));
+  },
+
+  archiveBoardCompleted: (boardDate) => {
+    const todayK = getTodayDateKey();
+    const isToday = boardDate === todayK;
+    const done = get().todos.filter((t) => {
+      if (!t.completed) return false;
+      return isToday ? t.targetDate <= todayK : t.targetDate === boardDate;
+    });
+    if (done.length === 0) return;
+    const doneIds = new Set(done.map((t) => t.id));
+    set((s) => ({
+      todos: s.todos.filter((t) => !doneIds.has(t.id)),
+      archivedTodos: [...s.archivedTodos, ...done],
+    }));
+    persistArchiveTodos(done.map((t) => t.id));
+  },
+
+  removeTagFromAllTodos: (tagId) => {
+    set((s) => ({
+      todos: s.todos.map((t) => ({ ...t, tagIds: t.tagIds.filter((id) => id !== tagId) })),
+    }));
+    persistTodos(get().todos);
+  },
+
+  addSubtask: (todoId, title) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        const subs = t.subtasks;
+        const maxOrder = subs.length > 0 ? Math.max(...subs.map((st) => st.order)) : -1;
+        return {
+          ...t,
+          subtasks: [...subs, { id: nanoid(), title, completed: false, order: maxOrder + 1 }],
+        };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  toggleSubtask: (todoId, subtaskId) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        return {
+          ...t,
+          subtasks: t.subtasks.map((st) =>
+            st.id === subtaskId ? { ...st, completed: !st.completed } : st,
+          ),
+        };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  deleteSubtask: (todoId, subtaskId) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        return { ...t, subtasks: t.subtasks.filter((st) => st.id !== subtaskId) };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  addTimeSlot: (todoId) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        const slot: TimeSlot = { id: nanoid(), start: "09:00", end: null };
+        return { ...t, timeSlots: [...t.timeSlots, slot] };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  removeTimeSlot: (todoId, slotId) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        return { ...t, timeSlots: t.timeSlots.filter((sl) => sl.id !== slotId) };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  updateTimeSlot: (todoId, slotId, updates) => {
+    set((s) => ({
+      todos: s.todos.map((t) => {
+        if (t.id !== todoId) return t;
+        return {
+          ...t,
+          timeSlots: t.timeSlots.map((sl) => (sl.id === slotId ? { ...sl, ...updates } : sl)),
+        };
+      }),
+    }));
+    const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) persistSingleTodo(updated);
+  },
+
+  importTodos: (incoming) => {
+    let count = 0;
+    set((s) => {
+      const existingMap = new Map(s.todos.map((t) => [t.id, t]));
+      for (const t of incoming) {
+        existingMap.set(t.id, {
+          ...t,
+          subtasks: t.subtasks.map((st) => ({ ...st, order: st.order })),
+          timeSlots: t.timeSlots,
+          durationDays: t.durationDays,
+          completedDayKeys: t.completedDayKeys,
         });
-        const todos = (s?.todos ?? SEED_TODOS).map(migrateTodo);
-        const archivedTodos = (s?.archivedTodos ?? []).map(migrateTodo);
-        return { todos, archivedTodos };
-      },
-    },
-  ),
-);
+        count++;
+      }
+      return { todos: Array.from(existingMap.values()) };
+    });
+    persistTodos(get().todos);
+    return count;
+  },
+
+  importArchivedTodos: (incoming) => {
+    let count = 0;
+    set((s) => {
+      const existingMap = new Map(s.archivedTodos.map((t) => [t.id, t]));
+      for (const t of incoming) {
+        existingMap.set(t.id, {
+          ...t,
+          subtasks: t.subtasks.map((st) => ({ ...st, order: st.order })),
+          timeSlots: t.timeSlots,
+          durationDays: t.durationDays,
+          completedDayKeys: t.completedDayKeys,
+        });
+        count++;
+      }
+      return { archivedTodos: Array.from(existingMap.values()) };
+    });
+    persistArchivedTodos(get().archivedTodos);
+    return count;
+  },
+
+  splitOverdueSubtasks: (todayKey) => {
+    const yesterdayKey = shiftDateKey(todayKey, -1);
+    set((s) => {
+      const next: Todo[] = [];
+      for (const td of s.todos) {
+        if (td.targetDate !== yesterdayKey) {
+          next.push(td);
+          continue;
+        }
+        if (td.durationDays > 1) {
+          next.push(td);
+          continue;
+        }
+        const subs = td.subtasks;
+        if (subs.length === 0) {
+          next.push(td);
+          continue;
+        }
+        const done = subs.filter((st) => st.completed);
+        const pending = subs.filter((st) => !st.completed);
+        if (done.length > 0) {
+          next.push({
+            ...td,
+            id: nanoid(),
+            title: td.title,
+            completed: true,
+            subtasks: done,
+            targetDate: yesterdayKey,
+            completedDayKeys: td.completedDayKeys,
+          });
+        }
+        if (pending.length > 0) {
+          next.push({
+            ...td,
+            targetDate: todayKey,
+            completed: false,
+            subtasks: pending,
+            completedDayKeys: td.completedDayKeys,
+          });
+        } else if (done.length === 0) {
+          next.push({ ...td, targetDate: todayKey });
+        }
+      }
+      return { todos: next };
+    });
+    persistTodos(get().todos);
+  },
+}));

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { AlertTriangle, Check, ChevronRight, GripVertical, ListPlus, Trash2 } from "lucide-react";
 import {
   DndContext,
@@ -15,7 +15,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   cn,
   DIFFICULTY_CONFIG,
-  formatTime,
+  formatTimeSlots,
   getDayIndexInDuration,
   getOverdueDays,
   getTodayDateKey,
@@ -26,7 +26,7 @@ import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { TagBadge } from "@/components/TagBadge";
-import type { Todo, SubTask, Difficulty, Locale } from "@/types";
+import type { Todo, SubTask, Locale } from "@/types";
 
 interface Props {
   todo: Todo;
@@ -35,10 +35,13 @@ interface Props {
   index?: number;
 }
 
+const ENTER_THRESHOLD_MS = 600;
+
 export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(todo.title);
   const [anim, setAnim] = useState<"completing" | "uncompleting" | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const locale = useSettingsStore((s) => s.locale);
@@ -57,24 +60,21 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const [subtaskInput, setSubtaskInput] = useState("");
   const [dragSubId, setDragSubId] = useState<string | null>(null);
   const refDate = boardDate ?? todayK;
+  const [isNew] = useState(() => Date.now() - todo.createdAt < ENTER_THRESHOLD_MS);
 
   const subtasks = useMemo(
-    () => [...(todo.subtasks ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    () => [...todo.subtasks].sort((a, b) => a.order - b.order),
     [todo.subtasks],
   );
   const showSubtasks = enableSubtasks;
   const doneCount = subtasks.filter((st) => st.completed).length;
-  const dur = todo.durationDays ?? 1;
+  const dur = todo.durationDays;
   const dayIdx = dur > 1 ? getDayIndexInDuration(todo.targetDate, refDate, dur) : null;
 
   const todoTags = tags.filter((tg) => todo.tagIds.includes(tg.id));
-  const diff = DIFFICULTY_CONFIG[todo.difficulty as Difficulty];
-  const od = todo.completed ? 0 : getOverdueDays(todo.targetDate, todayK);
-  const time = todo.timeStart
-    ? todo.timeEnd
-      ? `${formatTime(todo.timeStart)} - ${formatTime(todo.timeEnd)}`
-      : formatTime(todo.timeStart)
-    : null;
+  const diff = DIFFICULTY_CONFIG[todo.difficulty];
+  const od = todo.completed ? 0 : getOverdueDays(todo.targetDate, todayK, todo.durationDays);
+  const time = formatTimeSlots(todo.timeSlots);
   const hasMeta = time || todoTags.length > 0 || od > 0 || dayIdx !== null;
 
   useEffect(() => {
@@ -83,34 +83,38 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
       ref.current?.select();
     }
   }, [editing]);
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(
     () => () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
     },
     [],
   );
 
-  const isDayDone = dur > 1
-    ? (todo.completedDayKeys ?? []).includes(refDate)
-    : todo.completed;
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (deleting) return;
+    setDeleting(true);
+    deleteTimerRef.current = setTimeout(() => remove(todo.id), 350);
+  };
 
-  const handleToggle = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (anim) return;
-      const currentDone = dur > 1 ? (todo.completedDayKeys ?? []).includes(refDate) : todo.completed;
-      const dir = currentDone ? "uncompleting" : "completing";
-      setAnim(dir);
-      timerRef.current = setTimeout(
-        () => {
-          toggle(todo.id, dur > 1 ? refDate : undefined);
-          setAnim(null);
-        },
-        dir === "completing" ? 420 : 320,
-      );
-    },
-    [anim, todo.completed, todo.completedDayKeys, todo.id, toggle, dur, refDate],
-  );
+  const isDayDone = dur > 1 ? todo.completedDayKeys.includes(refDate) : todo.completed;
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (anim) return;
+    const currentDone = dur > 1 ? todo.completedDayKeys.includes(refDate) : todo.completed;
+    const dir = currentDone ? "uncompleting" : "completing";
+    setAnim(dir);
+    timerRef.current = setTimeout(
+      () => {
+        toggle(todo.id, dur > 1 ? refDate : undefined);
+        setAnim(null);
+      },
+      dir === "completing" ? 420 : 320,
+    );
+  };
 
   function save() {
     const v = editVal.trim();
@@ -128,7 +132,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     setEdit(todo.id);
   }
 
-  function handleAddSubtask(e: React.FormEvent) {
+  function handleAddSubtask(e: React.SyntheticEvent) {
     e.preventDefault();
     const v = subtaskInput.trim();
     if (v) {
@@ -153,6 +157,8 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
         todo.completed && !anim && "opacity-50",
         anim === "completing" && "animate-row-complete",
         anim === "uncompleting" && "animate-row-uncomplete",
+        deleting && "animate-row-delete",
+        isNew && !anim && !deleting && "animate-row-enter",
       )}
     >
       {od > 0 && <span className="absolute inset-y-2 left-0 w-[3px] bg-warning" />}
@@ -291,9 +297,9 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
             {dayIdx !== null && (
               <span className="inline-flex items-center gap-1 bg-accent/10 px-2 py-0.5 text-[13px] font-medium text-accent">
                 {t("duration.day_n", locale, { x: dayIdx, n: dur })}
-                {(todo.completedDayKeys ?? []).length > 0 && (
+                {todo.completedDayKeys.length > 0 && (
                   <span className="opacity-70">
-                    ({t("duration.done_n", locale, { n: (todo.completedDayKeys ?? []).length })})
+                    ({t("duration.done_n", locale, { n: todo.completedDayKeys.length })})
                   </span>
                 )}
               </span>
@@ -327,10 +333,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
 
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          remove(todo.id);
-        }}
+        onClick={handleDelete}
         className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
       >
         <Trash2 size={15} />
@@ -344,14 +347,24 @@ function SubtaskRow({
   onToggle,
   onDelete,
   dragListeners,
+  isDeleting,
+  isEntering,
 }: {
   st: SubTask;
   onToggle: () => void;
   onDelete: () => void;
   dragListeners?: Record<string, unknown>;
+  isDeleting?: boolean;
+  isEntering?: boolean;
 }) {
   return (
-    <div className="group/st flex min-h-[28px] items-center gap-1.5 rounded-md py-1 pr-1 transition-colors hover:bg-surface-2/60">
+    <div
+      className={cn(
+        "group/st flex min-h-[28px] items-center gap-1.5 rounded-md py-1 pr-1 transition-colors hover:bg-surface-2/60",
+        isDeleting && "animate-subtask-delete",
+        isEntering && "animate-subtask-enter",
+      )}
+    >
       <div
         {...(dragListeners ?? {})}
         onClick={(e) => e.stopPropagation()}
@@ -386,7 +399,7 @@ function SubtaskRow({
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          onDelete();
+          if (!isDeleting) onDelete();
         }}
         className="shrink-0 rounded p-1 text-text-3 opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover/st:opacity-100"
       >
@@ -400,10 +413,14 @@ function SortableSubtaskRow({
   st,
   onToggle,
   onDelete,
+  isDeleting,
+  isEntering,
 }: {
   st: SubTask;
   onToggle: () => void;
   onDelete: () => void;
+  isDeleting?: boolean;
+  isEntering?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: st.id,
@@ -419,7 +436,14 @@ function SortableSubtaskRow({
       }}
       {...attributes}
     >
-      <SubtaskRow st={st} onToggle={onToggle} onDelete={onDelete} dragListeners={listeners} />
+      <SubtaskRow
+        st={st}
+        onToggle={onToggle}
+        onDelete={onDelete}
+        dragListeners={listeners}
+        isDeleting={isDeleting}
+        isEntering={isEntering}
+      />
     </div>
   );
 }
@@ -442,7 +466,7 @@ function SubtaskList({
   locale: Locale;
   subtaskInput: string;
   setSubtaskInput: (v: string) => void;
-  onAddSubtask: (e: React.FormEvent) => void;
+  onAddSubtask: (e: React.SyntheticEvent) => void;
   onToggleSubtask: (id: string) => void;
   onDeleteSubtask: (id: string) => void;
   onReorder: (activeId: string, overId: string) => void;
@@ -451,6 +475,29 @@ function SubtaskList({
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const dragSub = dragSubId ? subtasks.find((s) => s.id === dragSubId) : null;
+  const [deletingSubId, setDeletingSubId] = useState<string | null>(null);
+  const prevIdsRef = useRef<Set<string>>(new Set(subtasks.map((s) => s.id)));
+  const [enteringIds, setEnteringIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const prev = prevIdsRef.current;
+    const added = subtasks.filter((s) => !prev.has(s.id)).map((s) => s.id);
+    if (added.length > 0) {
+      setEnteringIds(new Set(added));
+      const timer = setTimeout(() => setEnteringIds(new Set()), 250);
+      return () => clearTimeout(timer);
+    }
+    prevIdsRef.current = new Set(subtasks.map((s) => s.id));
+  }, [subtasks]);
+
+  const handleDeleteSubtask = (id: string) => {
+    if (deletingSubId) return;
+    setDeletingSubId(id);
+    setTimeout(() => {
+      onDeleteSubtask(id);
+      setDeletingSubId(null);
+    }, 280);
+  };
 
   function onDragStart(ev: DragStartEvent) {
     setDragSubId(String(ev.active.id));
@@ -482,18 +529,16 @@ function SubtaskList({
                   key={st.id}
                   st={st}
                   onToggle={() => onToggleSubtask(st.id)}
-                  onDelete={() => onDeleteSubtask(st.id)}
+                  onDelete={() => handleDeleteSubtask(st.id)}
+                  isDeleting={deletingSubId === st.id}
+                  isEntering={enteringIds.has(st.id)}
                 />
               ))}
             </SortableContext>
             <DragOverlay dropAnimation={null}>
               {dragSub ? (
                 <div className="cursor-grabbing rounded-md bg-surface-1 shadow-lg">
-                  <SubtaskRow
-                    st={dragSub}
-                    onToggle={() => {}}
-                    onDelete={() => {}}
-                  />
+                  <SubtaskRow st={dragSub} onToggle={() => {}} onDelete={() => {}} />
                 </div>
               ) : null}
             </DragOverlay>

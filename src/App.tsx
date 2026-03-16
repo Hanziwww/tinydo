@@ -15,6 +15,7 @@ import {
 import { t } from "@/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTodoStore } from "@/stores/todoStore";
+import { useTagStore } from "@/stores/tagStore";
 import { TitleBar } from "@/components/TitleBar";
 import { TodoInput } from "@/components/TodoInput";
 import { TodoList } from "@/components/TodoList";
@@ -27,6 +28,7 @@ import { Timeline } from "@/components/Timeline";
 import { MiniMode } from "@/components/MiniMode";
 import { FadeTransition } from "@/components/FadeTransition";
 import { useReminders } from "@/hooks/useReminders";
+import { initBackendData, settingsToStore } from "@/lib/init";
 import type { PlanningBoard } from "@/types";
 import { HistoryPanel } from "@/components/HistoryPanel";
 
@@ -39,6 +41,23 @@ function App() {
   const [board, setBoard] = useState<PlanningBoard>("today");
   const [now, setNow] = useState(() => new Date());
   const [mini, setMini] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  const hydrated = useTodoStore((s) => s._hydrated);
+
+  // Backend initialization: load data from SQLite (with localStorage migration)
+  useEffect(() => {
+    initBackendData()
+      .then((data) => {
+        useTodoStore.getState()._hydrate(data.todos, data.archivedTodos);
+        useTagStore.getState()._hydrate(data.tags, data.tagGroups);
+        useSettingsStore.getState()._hydrate(settingsToStore(data.settings));
+      })
+      .catch((e: unknown) => {
+        console.error("Backend init failed:", e);
+        setInitError(String(e));
+      });
+  }, []);
 
   const locale = useSettingsStore((s) => s.locale);
   const showTimeline = useSettingsStore((s) => s.showTimeline);
@@ -59,7 +78,10 @@ function App() {
   const bDate = board === "today" ? todayK : tomorrowK;
   const dispDate = board === "history" ? todayD : board === "today" ? todayD : tomorrowD;
   const overdueN = useMemo(
-    () => todos.filter((td) => !td.completed && getOverdueDays(td.targetDate, todayK) > 0).length,
+    () =>
+      todos.filter(
+        (td) => !td.completed && getOverdueDays(td.targetDate, todayK, td.durationDays) > 0,
+      ).length,
     [todos, todayK],
   );
 
@@ -71,7 +93,10 @@ function App() {
         : t("app.greeting_tomorrow", locale);
 
   useEffect(() => {
-    if (!unlocked && board === "tomorrow") setBoard("today");
+    if (!unlocked && board === "tomorrow") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync board when tomorrow locks
+      setBoard("today");
+    }
   }, [board, unlocked]);
   const splitOverdueSubtasks = useTodoStore((s) => s.splitOverdueSubtasks);
   const prevTodayRef = useRef(todayK);
@@ -124,7 +149,9 @@ function App() {
       const sf = await win.scaleFactor();
       const pos = await win.outerPosition();
       setMiniModePosition({ x: pos.x / sf, y: pos.y / sf });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     await win.setAlwaysOnTop(false);
     await win.setMinSize(new LogicalSize(640, 480));
     const r = useSettingsStore.getState().fullModeRect ?? { w: 1080, h: 780, x: 200, y: 100 };
@@ -133,6 +160,20 @@ function App() {
     await win.setResizable(true);
     setMini(false);
   }, [setMiniModePosition]);
+
+  if (!hydrated) {
+    return (
+      <div className="flex h-full items-center justify-center bg-surface-0 text-text-1">
+        <div className="text-center">
+          {initError ? (
+            <p className="text-sm text-red-400">{initError}</p>
+          ) : (
+            <p className="animate-pulse text-sm text-text-3">Loading...</p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (mini) {
     return (

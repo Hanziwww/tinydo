@@ -53,14 +53,14 @@ export function TagManager() {
     });
   }
 
-  function handleAddTag(e: React.FormEvent) {
+  function handleAddTag(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!newTagName.trim()) return;
     addTag(newTagName.trim(), selectedGroupId);
     setNewTagName("");
   }
 
-  function handleAddGroup(e: React.FormEvent) {
+  function handleAddGroup(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!newGroupName.trim()) return;
     const group = addTagGroup(newGroupName.trim());

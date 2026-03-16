@@ -12,7 +12,7 @@ import {
   timeToMinutes,
   minutesToTime,
 } from "@/lib/utils";
-import type { PlanningBoard } from "@/types";
+import type { PlanningBoard, TimeSlot } from "@/types";
 
 interface Props {
   board: PlanningBoard;
@@ -32,7 +32,7 @@ export function Timeline({ board, boardDate }: Props) {
     return d.getHours() * 60 + d.getMinutes();
   });
   const todos = useTodoStore((s) => s.todos);
-  const updateTodo = useTodoStore((s) => s.updateTodo);
+  const updateTimeSlot = useTodoStore((s) => s.updateTimeSlot);
   const setEditingId = useTodoStore((s) => s.setEditingTodoId);
   const tags = useTagStore((s) => s.tags);
   const todayK = getTodayDateKey();
@@ -41,7 +41,8 @@ export function Timeline({ board, boardDate }: Props) {
 
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [drag, setDrag] = useState<{
-    id: string;
+    todoId: string;
+    slotId: string;
     edge: "start" | "end" | "point";
     origStart: number;
     origEnd: number | null;
@@ -62,10 +63,10 @@ export function Timeline({ board, boardDate }: Props) {
 
   const refDate = board === "today" ? todayK : boardDate;
   const items = todos.filter((td) => {
-    const dur = td.durationDays ?? 1;
+    const dur = td.durationDays;
     const endDate = shiftDateKey(td.targetDate, dur - 1);
     const inB = td.targetDate <= refDate && endDate >= refDate;
-    return inB && td.timeStart;
+    return inB && td.timeSlots.length > 0;
   });
 
   const color = (ids: string[]) => tags.find((tg) => ids.includes(tg.id))?.color ?? "#6366f1";
@@ -78,17 +79,20 @@ export function Timeline({ board, boardDate }: Props) {
   const nowLabel = `${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`;
 
   const onPointerDown = useCallback(
-    (e: React.PointerEvent, id: string, edge: "start" | "end" | "point") => {
+    (e: React.PointerEvent, todoId: string, slotId: string, edge: "start" | "end" | "point") => {
       e.stopPropagation();
       e.preventDefault();
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
-      const td = todos.find((x) => x.id === id);
+      const td = todos.find((x) => x.id === todoId);
       if (!td) return;
+      const slot = td.timeSlots.find((s) => s.id === slotId);
+      if (!slot) return;
       setDrag({
-        id,
+        todoId,
+        slotId,
         edge,
-        origStart: timeToMinutes(td.timeStart!),
-        origEnd: td.timeEnd ? timeToMinutes(td.timeEnd) : null,
+        origStart: timeToMinutes(slot.start),
+        origEnd: slot.end ? timeToMinutes(slot.end) : null,
         startX: e.clientX,
       });
       setTooltip(null);
@@ -106,16 +110,16 @@ export function Timeline({ board, boardDate }: Props) {
         const newStart = snap(
           Math.max(START, Math.min(drag.origEnd! - SNAP, drag.origStart + dMin)),
         );
-        updateTodo(drag.id, { timeStart: minutesToTime(newStart) });
+        updateTimeSlot(drag.todoId, drag.slotId, { start: minutesToTime(newStart) });
       } else if (drag.edge === "end") {
         const newEnd = snap(Math.max(drag.origStart + SNAP, Math.min(END, drag.origEnd! + dMin)));
-        updateTodo(drag.id, { timeEnd: minutesToTime(newEnd) });
+        updateTimeSlot(drag.todoId, drag.slotId, { end: minutesToTime(newEnd) });
       } else {
         const newPoint = snap(Math.max(START, Math.min(END, drag.origStart + dMin)));
-        updateTodo(drag.id, { timeStart: minutesToTime(newPoint) });
+        updateTimeSlot(drag.todoId, drag.slotId, { start: minutesToTime(newPoint) });
       }
     },
-    [drag, RANGE, START, END, updateTodo],
+    [drag, RANGE, START, END, updateTimeSlot],
   );
 
   const onPointerUp = useCallback(() => {
@@ -132,6 +136,71 @@ export function Timeline({ board, boardDate }: Props) {
       x: e.clientX - cRect.left,
       y: bRect.top - cRect.top,
     });
+  };
+
+  const renderSlot = (td: (typeof items)[0], slot: TimeSlot) => {
+    const c = color(td.tagIds);
+    const s = timeToMinutes(slot.start);
+    const isDragging = drag !== null && drag.todoId === td.id && drag.slotId === slot.id;
+    const isDayDone = td.durationDays > 1 ? td.completedDayKeys.includes(refDate) : td.completed;
+
+    if (!slot.end) {
+      return (
+        <div
+          key={`${td.id}-${slot.id}`}
+          className={cn(
+            "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 transition-transform duration-100",
+            isDayDone && "opacity-25",
+            isDragging && "scale-125",
+            !isDragging && "cursor-grab hover:scale-110",
+          )}
+          style={{ left: `${pct(s)}%`, backgroundColor: c }}
+          onMouseEnter={(ev) => showTooltip(ev, `${td.title}  ${slot.start}`)}
+          onMouseLeave={() => setTooltip(null)}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            if (!drag) setEditingId(td.id);
+          }}
+          onPointerDown={(ev) => onPointerDown(ev, td.id, slot.id, "point")}
+        />
+      );
+    }
+
+    const e = timeToMinutes(slot.end);
+    const leftPct = pct(s);
+    const widthPct = Math.max(0.5, ((e - s) / RANGE) * 100);
+
+    return (
+      <div
+        key={`${td.id}-${slot.id}`}
+        className={cn(
+          "absolute top-1.5 bottom-1.5 transition-opacity duration-100",
+          isDayDone && "opacity-25",
+          isDragging && "opacity-80",
+        )}
+        style={{
+          left: `${leftPct}%`,
+          width: `${widthPct}%`,
+          backgroundColor: hexToRgba(c, 0.45),
+          borderLeft: `3px solid ${c}`,
+        }}
+        onMouseEnter={(ev) => showTooltip(ev, `${td.title}  ${slot.start}-${slot.end}`)}
+        onMouseLeave={() => setTooltip(null)}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          if (!drag) setEditingId(td.id);
+        }}
+      >
+        <div
+          className="absolute inset-y-0 left-0 w-2 cursor-ew-resize"
+          onPointerDown={(ev) => onPointerDown(ev, td.id, slot.id, "start")}
+        />
+        <div
+          className="absolute inset-y-0 right-0 w-2 cursor-ew-resize"
+          onPointerDown={(ev) => onPointerDown(ev, td.id, slot.id, "end")}
+        />
+      </div>
+    );
   };
 
   return (
@@ -201,71 +270,7 @@ export function Timeline({ board, boardDate }: Props) {
               />
             ))}
 
-            {items.map((td) => {
-              const c = color(td.tagIds);
-              const s = timeToMinutes(td.timeStart!);
-              const isDragging = drag?.id === td.id;
-
-              if (!td.timeEnd) {
-                return (
-                  <div
-                    key={td.id}
-                    className={cn(
-                      "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 transition-transform duration-100",
-                      td.completed && "opacity-25",
-                      isDragging && "scale-125",
-                      !isDragging && "cursor-grab hover:scale-110",
-                    )}
-                    style={{ left: `${pct(s)}%`, backgroundColor: c }}
-                    onMouseEnter={(e) => showTooltip(e, `${td.title}  ${td.timeStart}`)}
-                    onMouseLeave={() => setTooltip(null)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!drag) setEditingId(td.id);
-                    }}
-                    onPointerDown={(e) => onPointerDown(e, td.id, "point")}
-                  />
-                );
-              }
-
-              const e = timeToMinutes(td.timeEnd);
-              const leftPct = pct(s);
-              const widthPct = Math.max(0.5, ((e - s) / RANGE) * 100);
-
-              return (
-                <div
-                  key={td.id}
-                  className={cn(
-                    "absolute top-1.5 bottom-1.5 transition-opacity duration-100",
-                    td.completed && "opacity-25",
-                    isDragging && "opacity-80",
-                  )}
-                  style={{
-                    left: `${leftPct}%`,
-                    width: `${widthPct}%`,
-                    backgroundColor: hexToRgba(c, 0.45),
-                    borderLeft: `3px solid ${c}`,
-                  }}
-                  onMouseEnter={(e2) =>
-                    showTooltip(e2, `${td.title}  ${td.timeStart}-${td.timeEnd}`)
-                  }
-                  onMouseLeave={() => setTooltip(null)}
-                  onClick={(e2) => {
-                    e2.stopPropagation();
-                    if (!drag) setEditingId(td.id);
-                  }}
-                >
-                  <div
-                    className="absolute inset-y-0 left-0 w-2 cursor-ew-resize"
-                    onPointerDown={(ev) => onPointerDown(ev, td.id, "start")}
-                  />
-                  <div
-                    className="absolute inset-y-0 right-0 w-2 cursor-ew-resize"
-                    onPointerDown={(ev) => onPointerDown(ev, td.id, "end")}
-                  />
-                </div>
-              );
-            })}
+            {items.map((td) => td.timeSlots.map((slot) => renderSlot(td, slot)))}
 
             {showNow && (
               <div
