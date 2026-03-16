@@ -39,9 +39,9 @@ fn parse_hhmm(s: &str) -> Option<i64> {
     Some(h * 60 + m)
 }
 
-/// Get today's date key in the same format as the frontend: "YYYYMMDD".
+/// Get today's date key matching the frontend format: "YYYY-MM-DD".
 fn today_key() -> String {
-    chrono::Local::now().format("%Y%m%d").to_string()
+    chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
 /// Check if a todo should be reminded today.
@@ -51,10 +51,9 @@ fn is_active_today(todo: &Todo) -> bool {
         if todo.completed_day_keys.contains(&today) {
             return false;
         }
-        // Check if today falls within the duration window
         if let (Ok(target), Ok(now)) = (
-            chrono::NaiveDate::parse_from_str(&todo.target_date, "%Y%m%d"),
-            chrono::NaiveDate::parse_from_str(&today, "%Y%m%d"),
+            chrono::NaiveDate::parse_from_str(&todo.target_date, "%Y-%m-%d"),
+            chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d"),
         ) {
             let end = target + chrono::Duration::days(todo.duration_days as i64 - 1);
             return now >= target && now <= end;
@@ -182,6 +181,24 @@ pub fn cancel_all_reminders(app: AppHandle) -> Result<(), crate::error::AppError
 mod tests {
     use super::*;
 
+    fn make_todo(target_date: &str, duration_days: u32, completed_day_keys: Vec<String>) -> Todo {
+        Todo {
+            id: "t1".into(),
+            title: "Test".into(),
+            completed: false,
+            tag_ids: vec![],
+            difficulty: 2,
+            time_slots: vec![],
+            reminder_mins_before: Some(5),
+            target_date: target_date.into(),
+            order: 0.0,
+            created_at: 0.0,
+            subtasks: vec![],
+            duration_days,
+            completed_day_keys,
+        }
+    }
+
     #[test]
     fn parse_hhmm_valid() {
         assert_eq!(parse_hhmm("09:30"), Some(570));
@@ -198,49 +215,88 @@ mod tests {
 
     #[test]
     fn is_active_today_matching_date() {
-        let today = today_key();
-        let todo = Todo {
-            id: "t1".into(),
-            title: "Test".into(),
-            completed: false,
-            tag_ids: vec![],
-            difficulty: 2,
-            time_slots: vec![],
-            reminder_mins_before: Some(5),
-            target_date: today,
-            order: 0.0,
-            created_at: 0.0,
-            subtasks: vec![],
-            duration_days: 1,
-            completed_day_keys: vec![],
-        };
+        let todo = make_todo(&today_key(), 1, vec![]);
         assert!(is_active_today(&todo));
     }
 
     #[test]
     fn is_active_today_wrong_date() {
-        let todo = Todo {
-            id: "t1".into(),
-            title: "Test".into(),
-            completed: false,
-            tag_ids: vec![],
-            difficulty: 2,
-            time_slots: vec![],
-            reminder_mins_before: Some(5),
-            target_date: "19990101".into(),
-            order: 0.0,
-            created_at: 0.0,
-            subtasks: vec![],
-            duration_days: 1,
-            completed_day_keys: vec![],
-        };
+        let todo = make_todo("1999-01-01", 1, vec![]);
         assert!(!is_active_today(&todo));
     }
 
     #[test]
     fn reminder_state_cancel_all() {
         let state = ReminderState::new();
-        // Should not panic on empty
         state.cancel_all_inner();
+    }
+
+    // ── Multi-day task scenarios ──────────────────────────────────────
+
+    #[test]
+    fn multi_day_task_active_on_start_date() {
+        let today = today_key();
+        let todo = make_todo(&today, 3, vec![]);
+        assert!(is_active_today(&todo));
+    }
+
+    #[test]
+    fn multi_day_task_active_on_middle_day() {
+        let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let todo = make_todo(&yesterday, 3, vec![]);
+        assert!(is_active_today(&todo));
+    }
+
+    #[test]
+    fn multi_day_task_active_on_last_day() {
+        let two_days_ago = (chrono::Local::now() - chrono::Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
+        let todo = make_todo(&two_days_ago, 3, vec![]);
+        assert!(is_active_today(&todo));
+    }
+
+    #[test]
+    fn multi_day_task_inactive_after_end() {
+        let four_days_ago = (chrono::Local::now() - chrono::Duration::days(4))
+            .format("%Y-%m-%d")
+            .to_string();
+        let todo = make_todo(&four_days_ago, 3, vec![]);
+        assert!(!is_active_today(&todo));
+    }
+
+    #[test]
+    fn multi_day_task_inactive_before_start() {
+        let tomorrow = (chrono::Local::now() + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let todo = make_todo(&tomorrow, 3, vec![]);
+        assert!(!is_active_today(&todo));
+    }
+
+    #[test]
+    fn multi_day_task_skipped_when_today_completed() {
+        let today = today_key();
+        let todo = make_todo(&today, 3, vec![today.clone()]);
+        assert!(!is_active_today(&todo));
+    }
+
+    #[test]
+    fn multi_day_task_active_when_other_day_completed() {
+        let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let todo = make_todo(&yesterday, 3, vec![yesterday.clone()]);
+        assert!(is_active_today(&todo));
+    }
+
+    #[test]
+    fn single_day_task_not_affected_by_completed_keys() {
+        let today = today_key();
+        let todo = make_todo(&today, 1, vec![today.clone()]);
+        // Single-day uses simple date match, not completed_day_keys
+        assert!(is_active_today(&todo));
     }
 }

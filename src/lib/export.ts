@@ -1,6 +1,9 @@
 import { save, open } from "@tauri-apps/plugin-dialog";
 import * as backend from "@/lib/backend";
+import { settingsToStore } from "@/lib/init";
 import { useTodoStore } from "@/stores/todoStore";
+import { useTagStore } from "@/stores/tagStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 export async function exportAllData() {
   const filePath = await save({
@@ -30,12 +33,16 @@ export async function importAllData(): Promise<number> {
     const result = await backend.importData(filePath);
     const total = result.todosCount + result.archivedCount;
 
-    // Reload data into stores from backend
-    const [todos, archivedTodos] = await Promise.all([
+    const [todos, archivedTodos, tags, tagGroups, settings] = await Promise.all([
       backend.getTodos(false),
       backend.getTodos(true),
+      backend.getTags(),
+      backend.getTagGroups(),
+      backend.getAllSettings(),
     ]);
     useTodoStore.getState()._hydrate(todos, archivedTodos);
+    useTagStore.getState()._hydrate(tags, tagGroups);
+    useSettingsStore.getState()._hydrate(settingsToStore(settings));
 
     return total;
   } catch (err) {

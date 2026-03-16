@@ -125,6 +125,9 @@ pub struct LegacyData {
 pub struct ImportResult {
     pub todos_count: usize,
     pub archived_count: usize,
+    pub tags_count: usize,
+    pub tag_groups_count: usize,
+    pub settings_updated: bool,
 }
 
 /// JSON export envelope, matching the frontend export format.
@@ -167,7 +170,7 @@ mod tests {
                 end: Some("10:00".into()),
             }],
             reminder_mins_before: Some(5),
-            target_date: "20260316".into(),
+            target_date: "2026-03-16".into(),
             order: 1.0,
             created_at: 1710000000000.0,
             subtasks: vec![SubTask {

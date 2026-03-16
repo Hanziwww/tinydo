@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::db::{self, DbState};
 use crate::error::AppError;
-use crate::models::{ExportEnvelope, ExportSettings, ImportResult, Todo};
+use crate::models::{ExportEnvelope, ExportSettings, ImportResult, Tag, TagGroup, Todo};
 
 #[tauri::command]
 pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), AppError> {
@@ -185,6 +185,11 @@ pub fn import_data(state: State<'_, DbState>, file_path: String) -> Result<Impor
         .lock()
         .map_err(|e| AppError::custom(e.to_string()))?;
 
+    // Replace mode: clear existing data before importing
+    db::clear_todos(&conn)?;
+    db::clear_tags(&conn)?;
+    db::clear_tag_groups(&conn)?;
+
     let mut todos_count = 0;
     for raw_todo in todos_arr {
         let todo = normalize_todo(raw_todo)?;
@@ -201,16 +206,65 @@ pub fn import_data(state: State<'_, DbState>, file_path: String) -> Result<Impor
         }
     }
 
+    // Import tags
+    let mut tags_count = 0;
+    if let Some(tags_arr) = obj.get("tags").and_then(|v| v.as_array()) {
+        for raw_tag in tags_arr {
+            let tag: Tag = serde_json::from_value(raw_tag.clone())?;
+            db::save_tag(&conn, &tag)?;
+            tags_count += 1;
+        }
+    }
+
+    // Import tag groups
+    let mut tag_groups_count = 0;
+    if let Some(groups_arr) = obj.get("tagGroups").and_then(|v| v.as_array()) {
+        for raw_group in groups_arr {
+            let group: TagGroup = serde_json::from_value(raw_group.clone())?;
+            db::save_tag_group(&conn, &group)?;
+            tag_groups_count += 1;
+        }
+    }
+
+    // Import settings (merge: patch exported fields onto current settings)
+    let mut settings_updated = false;
+    if let Some(settings_obj) = obj.get("settings").and_then(|v| v.as_object()) {
+        let mut settings = db::get_settings(&conn)?;
+        if let Some(v) = settings_obj.get("theme").and_then(|v| v.as_str()) {
+            settings.theme = v.to_string();
+        }
+        if let Some(v) = settings_obj.get("locale").and_then(|v| v.as_str()) {
+            settings.locale = v.to_string();
+        }
+        if let Some(v) = settings_obj.get("showTimeline").and_then(|v| v.as_bool()) {
+            settings.show_timeline = v;
+        }
+        if let Some(v) = settings_obj
+            .get("tomorrowPlanningUnlockHour")
+            .and_then(|v| v.as_u64())
+        {
+            settings.tomorrow_planning_unlock_hour = v as u32;
+        }
+        db::save_settings(&conn, &settings)?;
+        settings_updated = true;
+    }
+
     log::info!(
-        "Data imported from {}: {} todos, {} archived",
+        "Data imported from {}: {} todos, {} archived, {} tags, {} tag groups, settings={}",
         file_path,
         todos_count,
-        archived_count
+        archived_count,
+        tags_count,
+        tag_groups_count,
+        settings_updated
     );
 
     Ok(ImportResult {
         todos_count,
         archived_count,
+        tags_count,
+        tag_groups_count,
+        settings_updated,
     })
 }
 
@@ -295,17 +349,159 @@ fn crc32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{ExportEnvelope, ExportSettings};
+    use rusqlite::Connection;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE todos (id TEXT PRIMARY KEY, data TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE tags (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE tag_groups (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            ",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn sample_envelope() -> serde_json::Value {
+        serde_json::json!({
+            "version": "2.0",
+            "exportedAt": "2026-03-16T00:00:00Z",
+            "todos": [
+                {
+                    "id": "t1",
+                    "title": "Buy milk",
+                    "completed": false,
+                    "tagIds": ["tag1"],
+                    "difficulty": 3,
+                    "timeSlots": [{"id": "ts1", "start": "09:00", "end": "10:00"}],
+                    "reminderMinsBefore": 5,
+                    "targetDate": "2026-03-16",
+                    "order": 1.0,
+                    "createdAt": 1710000000000.0,
+                    "subtasks": [],
+                    "durationDays": 1,
+                    "completedDayKeys": []
+                }
+            ],
+            "archivedTodos": [
+                {
+                    "id": "a1",
+                    "title": "Old task",
+                    "completed": true,
+                    "tagIds": [],
+                    "difficulty": 2,
+                    "timeSlots": [],
+                    "targetDate": "2026-03-15",
+                    "order": 0.0,
+                    "createdAt": 1709900000000.0,
+                    "subtasks": [],
+                    "durationDays": 1,
+                    "completedDayKeys": []
+                }
+            ],
+            "tags": [
+                {"id": "tag1", "name": "Work", "color": "#ff0000", "groupId": "grp1"},
+                {"id": "tag2", "name": "Life", "color": "#00ff00", "groupId": null}
+            ],
+            "tagGroups": [
+                {"id": "grp1", "name": "Category", "order": 0}
+            ],
+            "settings": {
+                "theme": "light",
+                "locale": "en",
+                "showTimeline": false,
+                "tomorrowPlanningUnlockHour": 18
+            }
+        })
+    }
+
+    /// Write JSON to a temp file then call the import logic against an in-memory DB.
+    fn import_json_to_db(conn: &Connection, json: &serde_json::Value) -> ImportResult {
+        let obj = json.as_object().unwrap();
+
+        db::clear_todos(conn).unwrap();
+        db::clear_tags(conn).unwrap();
+        db::clear_tag_groups(conn).unwrap();
+
+        let todos_arr = obj.get("todos").and_then(|v| v.as_array()).unwrap();
+        let mut todos_count = 0;
+        for raw in todos_arr {
+            let todo = normalize_todo(raw).unwrap();
+            db::save_todo(conn, &todo, false).unwrap();
+            todos_count += 1;
+        }
+
+        let mut archived_count = 0;
+        if let Some(arr) = obj.get("archivedTodos").and_then(|v| v.as_array()) {
+            for raw in arr {
+                let todo = normalize_todo(raw).unwrap();
+                db::save_todo(conn, &todo, true).unwrap();
+                archived_count += 1;
+            }
+        }
+
+        let mut tags_count = 0;
+        if let Some(arr) = obj.get("tags").and_then(|v| v.as_array()) {
+            for raw in arr {
+                let tag: Tag = serde_json::from_value(raw.clone()).unwrap();
+                db::save_tag(conn, &tag).unwrap();
+                tags_count += 1;
+            }
+        }
+
+        let mut tag_groups_count = 0;
+        if let Some(arr) = obj.get("tagGroups").and_then(|v| v.as_array()) {
+            for raw in arr {
+                let group: TagGroup = serde_json::from_value(raw.clone()).unwrap();
+                db::save_tag_group(conn, &group).unwrap();
+                tag_groups_count += 1;
+            }
+        }
+
+        let mut settings_updated = false;
+        if let Some(settings_obj) = obj.get("settings").and_then(|v| v.as_object()) {
+            let mut settings = db::get_settings(conn).unwrap();
+            if let Some(v) = settings_obj.get("theme").and_then(|v| v.as_str()) {
+                settings.theme = v.to_string();
+            }
+            if let Some(v) = settings_obj.get("locale").and_then(|v| v.as_str()) {
+                settings.locale = v.to_string();
+            }
+            if let Some(v) = settings_obj.get("showTimeline").and_then(|v| v.as_bool()) {
+                settings.show_timeline = v;
+            }
+            if let Some(v) = settings_obj
+                .get("tomorrowPlanningUnlockHour")
+                .and_then(|v| v.as_u64())
+            {
+                settings.tomorrow_planning_unlock_hour = v as u32;
+            }
+            db::save_settings(conn, &settings).unwrap();
+            settings_updated = true;
+        }
+
+        ImportResult {
+            todos_count,
+            archived_count,
+            tags_count,
+            tag_groups_count,
+            settings_updated,
+        }
+    }
 
     #[test]
     fn crc32_known_value() {
-        // CRC32 of "pHYs" should be a known value
         let crc = crc32(b"pHYs");
         assert_ne!(crc, 0);
     }
 
     #[test]
     fn inject_dpi_preserves_small_png() {
-        // Too-small input should be returned as-is
         let small = vec![0u8; 10];
         let result = inject_png_dpi(&small, 360);
         assert_eq!(result.len(), 10);
@@ -320,7 +516,7 @@ mod tests {
             "tagIds": [],
             "difficulty": 2,
             "timeSlots": [],
-            "targetDate": "20260316",
+            "targetDate": "2026-03-16",
             "order": 0,
             "createdAt": 0,
             "subtasks": [],
@@ -344,5 +540,263 @@ mod tests {
         assert!(!todo.completed);
         assert_eq!(todo.difficulty, 2);
         assert_eq!(todo.duration_days, 1);
+    }
+
+    // ── Round-trip integration tests ──────────────────────────────────
+
+    #[test]
+    fn import_roundtrip_todos() {
+        let conn = test_conn();
+        let envelope = sample_envelope();
+        let result = import_json_to_db(&conn, &envelope);
+
+        assert_eq!(result.todos_count, 1);
+        assert_eq!(result.archived_count, 1);
+
+        let todos = db::get_todos(&conn, false).unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].id, "t1");
+        assert_eq!(todos[0].title, "Buy milk");
+        assert_eq!(todos[0].difficulty, 3);
+        assert_eq!(todos[0].tag_ids, vec!["tag1"]);
+
+        let archived = db::get_todos(&conn, true).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].id, "a1");
+        assert!(archived[0].completed);
+    }
+
+    #[test]
+    fn import_roundtrip_tags_and_groups() {
+        let conn = test_conn();
+        let envelope = sample_envelope();
+        let result = import_json_to_db(&conn, &envelope);
+
+        assert_eq!(result.tags_count, 2);
+        assert_eq!(result.tag_groups_count, 1);
+
+        let tags = db::get_tags(&conn).unwrap();
+        assert_eq!(tags.len(), 2);
+        let work_tag = tags.iter().find(|t| t.id == "tag1").unwrap();
+        assert_eq!(work_tag.name, "Work");
+        assert_eq!(work_tag.group_id, Some("grp1".into()));
+
+        let groups = db::get_tag_groups(&conn).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "Category");
+    }
+
+    #[test]
+    fn import_roundtrip_settings() {
+        let conn = test_conn();
+        let envelope = sample_envelope();
+        let result = import_json_to_db(&conn, &envelope);
+
+        assert!(result.settings_updated);
+
+        let settings = db::get_settings(&conn).unwrap();
+        assert_eq!(settings.theme, "light");
+        assert_eq!(settings.locale, "en");
+        assert!(!settings.show_timeline);
+        assert_eq!(settings.tomorrow_planning_unlock_hour, 18);
+        // Non-exported fields should retain defaults
+        assert_eq!(settings.timeline_start_hour, 0);
+        assert_eq!(settings.timeline_end_hour, 24);
+    }
+
+    #[test]
+    fn import_replace_clears_old_data() {
+        let conn = test_conn();
+
+        // Pre-populate with some data
+        let old_tag = Tag {
+            id: "old-tag".into(),
+            name: "Old".into(),
+            color: "#000".into(),
+            group_id: None,
+        };
+        db::save_tag(&conn, &old_tag).unwrap();
+        let old_todo = Todo {
+            id: "old-todo".into(),
+            title: "Old".into(),
+            completed: false,
+            tag_ids: vec![],
+            difficulty: 1,
+            time_slots: vec![],
+            reminder_mins_before: None,
+            target_date: "2026-01-01".into(),
+            order: 0.0,
+            created_at: 0.0,
+            subtasks: vec![],
+            duration_days: 1,
+            completed_day_keys: vec![],
+        };
+        db::save_todo(&conn, &old_todo, false).unwrap();
+
+        assert_eq!(db::get_tags(&conn).unwrap().len(), 1);
+        assert_eq!(db::get_todos(&conn, false).unwrap().len(), 1);
+
+        // Import replaces everything
+        let envelope = sample_envelope();
+        import_json_to_db(&conn, &envelope);
+
+        let tags = db::get_tags(&conn).unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.iter().all(|t| t.id != "old-tag"));
+
+        let todos = db::get_todos(&conn, false).unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].id, "t1");
+    }
+
+    #[test]
+    fn import_full_export_roundtrip_via_serde() {
+        let conn = test_conn();
+
+        // Build an ExportEnvelope, serialize it, then import back
+        let todo = Todo {
+            id: "rt1".into(),
+            title: "Roundtrip".into(),
+            completed: false,
+            tag_ids: vec!["tg1".into()],
+            difficulty: 4,
+            time_slots: vec![crate::models::TimeSlot {
+                id: "ts1".into(),
+                start: "14:00".into(),
+                end: Some("15:00".into()),
+            }],
+            reminder_mins_before: Some(10),
+            target_date: "2026-03-16".into(),
+            order: 2.5,
+            created_at: 1710000000000.0,
+            subtasks: vec![crate::models::SubTask {
+                id: "st1".into(),
+                title: "Sub".into(),
+                completed: true,
+                order: 0,
+            }],
+            duration_days: 3,
+            completed_day_keys: vec!["2026-03-16".into()],
+        };
+
+        let tag = Tag {
+            id: "tg1".into(),
+            name: "Urgent".into(),
+            color: "#e11d48".into(),
+            group_id: Some("g1".into()),
+        };
+
+        let group = TagGroup {
+            id: "g1".into(),
+            name: "Priority".into(),
+            order: 0,
+        };
+
+        let envelope = ExportEnvelope {
+            version: "2.0".into(),
+            exported_at: "2026-03-16T12:00:00Z".into(),
+            todos: vec![todo],
+            archived_todos: vec![],
+            tags: vec![tag],
+            tag_groups: vec![group],
+            settings: ExportSettings {
+                theme: "dark".into(),
+                locale: "zh".into(),
+                show_timeline: true,
+                tomorrow_planning_unlock_hour: 20,
+            },
+        };
+
+        let json_str = serde_json::to_string(&envelope).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        import_json_to_db(&conn, &parsed);
+
+        let todos = db::get_todos(&conn, false).unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].id, "rt1");
+        assert_eq!(todos[0].difficulty, 4);
+        assert_eq!(todos[0].duration_days, 3);
+        assert_eq!(todos[0].completed_day_keys, vec!["2026-03-16"]);
+        assert_eq!(todos[0].subtasks.len(), 1);
+        assert!(todos[0].subtasks[0].completed);
+
+        let tags = db::get_tags(&conn).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "Urgent");
+
+        let groups = db::get_tag_groups(&conn).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "Priority");
+    }
+
+    // ── Dirty data tolerance ──────────────────────────────────────────
+
+    #[test]
+    fn normalize_todo_extra_fields_ignored() {
+        let val = serde_json::json!({
+            "id": "t3",
+            "title": "Extra",
+            "unknownField": "should be ignored",
+            "anotherUnknown": 42
+        });
+        let todo = normalize_todo(&val).unwrap();
+        assert_eq!(todo.id, "t3");
+        assert_eq!(todo.title, "Extra");
+    }
+
+    #[test]
+    fn normalize_todo_wrong_types_use_defaults() {
+        let val = serde_json::json!({
+            "id": "t4",
+            "title": "TypeMix",
+            "completed": "not a bool",
+            "difficulty": "high",
+            "durationDays": "three"
+        });
+        let todo = normalize_todo(&val).unwrap();
+        assert!(!todo.completed);
+        assert_eq!(todo.difficulty, 2);
+        assert_eq!(todo.duration_days, 1);
+    }
+
+    #[test]
+    fn normalize_todo_not_object_errors() {
+        let val = serde_json::json!("just a string");
+        let err = normalize_todo(&val);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn import_missing_optional_sections() {
+        let conn = test_conn();
+        let minimal = serde_json::json!({
+            "todos": [{"id": "m1", "title": "Minimal"}]
+        });
+        let result = import_json_to_db(&conn, &minimal);
+
+        assert_eq!(result.todos_count, 1);
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.tags_count, 0);
+        assert_eq!(result.tag_groups_count, 0);
+        assert!(!result.settings_updated);
+    }
+
+    #[test]
+    fn import_empty_arrays() {
+        let conn = test_conn();
+        let empty = serde_json::json!({
+            "todos": [],
+            "archivedTodos": [],
+            "tags": [],
+            "tagGroups": [],
+            "settings": {}
+        });
+        let result = import_json_to_db(&conn, &empty);
+
+        assert_eq!(result.todos_count, 0);
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.tags_count, 0);
+        assert_eq!(result.tag_groups_count, 0);
+        assert!(result.settings_updated);
     }
 }

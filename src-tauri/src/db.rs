@@ -213,6 +213,23 @@ pub fn save_settings(conn: &Connection, settings: &Settings) -> Result<(), AppEr
     Ok(())
 }
 
+// ── Bulk clear (for import replace mode) ───────────────────────────────
+
+pub fn clear_todos(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM todos", [])?;
+    Ok(())
+}
+
+pub fn clear_tags(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM tags", [])?;
+    Ok(())
+}
+
+pub fn clear_tag_groups(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM tag_groups", [])?;
+    Ok(())
+}
+
 // ── Bulk migration ─────────────────────────────────────────────────────
 
 pub fn migrate_from_legacy(conn: &Connection, data: &LegacyData) -> Result<(), AppError> {
@@ -273,7 +290,7 @@ mod tests {
             difficulty: 2,
             time_slots: vec![],
             reminder_mins_before: None,
-            target_date: "20260316".into(),
+            target_date: "2026-03-16".into(),
             order: 0.0,
             created_at: 0.0,
             subtasks: vec![],
@@ -451,5 +468,98 @@ mod tests {
         assert_eq!(todos.len(), 1);
         assert_eq!(todos[0].title, "Updated");
         assert!(todos[0].completed);
+    }
+
+    #[test]
+    fn clear_todos_removes_all() {
+        let conn = test_conn();
+        save_todo(&conn, &sample_todo("t1"), false).unwrap();
+        save_todo(&conn, &sample_todo("t2"), false).unwrap();
+        save_todo(&conn, &sample_todo("a1"), true).unwrap();
+
+        clear_todos(&conn).unwrap();
+        assert!(get_todos(&conn, false).unwrap().is_empty());
+        assert!(get_todos(&conn, true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_tags_removes_all() {
+        let conn = test_conn();
+        save_tag(
+            &conn,
+            &Tag {
+                id: "t1".into(),
+                name: "A".into(),
+                color: "#000".into(),
+                group_id: None,
+            },
+        )
+        .unwrap();
+
+        clear_tags(&conn).unwrap();
+        assert!(get_tags(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_tag_groups_removes_all() {
+        let conn = test_conn();
+        save_tag_group(
+            &conn,
+            &TagGroup {
+                id: "g1".into(),
+                name: "G".into(),
+                order: 0,
+            },
+        )
+        .unwrap();
+
+        clear_tag_groups(&conn).unwrap();
+        assert!(get_tag_groups(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_preserves_all_data_types() {
+        let conn = test_conn();
+
+        let data = LegacyData {
+            todos: vec![sample_todo("t1")],
+            archived_todos: vec![sample_todo("a1")],
+            tags: vec![
+                Tag {
+                    id: "tag1".into(),
+                    name: "Work".into(),
+                    color: "#f00".into(),
+                    group_id: Some("grp1".into()),
+                },
+                Tag {
+                    id: "tag2".into(),
+                    name: "Life".into(),
+                    color: "#0f0".into(),
+                    group_id: None,
+                },
+            ],
+            tag_groups: vec![TagGroup {
+                id: "grp1".into(),
+                name: "Category".into(),
+                order: 0,
+            }],
+            settings: Settings {
+                theme: "light".into(),
+                locale: "en".into(),
+                ..Settings::default()
+            },
+        };
+
+        migrate_from_legacy(&conn, &data).unwrap();
+
+        assert_eq!(get_todos(&conn, false).unwrap().len(), 1);
+        assert_eq!(get_todos(&conn, true).unwrap().len(), 1);
+        assert_eq!(get_tags(&conn).unwrap().len(), 2);
+        assert_eq!(get_tag_groups(&conn).unwrap().len(), 1);
+
+        let settings = get_settings(&conn).unwrap();
+        assert_eq!(settings.theme, "light");
+        assert_eq!(settings.locale, "en");
+        assert!(settings.show_timeline); // default preserved
     }
 }

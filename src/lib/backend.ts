@@ -1,6 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Todo, Tag, TagGroup } from "@/types";
 
+// ── Error parsing ──────────────────────────────────────────────────────
+
+interface AppErrorPayload {
+  code: string;
+  message: string;
+}
+
+function isAppError(e: unknown): e is AppErrorPayload {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    typeof (e as AppErrorPayload).code === "string" &&
+    typeof (e as AppErrorPayload).message === "string"
+  );
+}
+
+export function parseError(e: unknown): string {
+  if (isAppError(e)) return e.message;
+  return String(e);
+}
+
 // ── Settings type (matches Rust Settings struct) ───────────────────────
 
 export interface BackendSettings {
@@ -31,6 +52,9 @@ export interface LegacyData {
 export interface ImportResult {
   todosCount: number;
   archivedCount: number;
+  tagsCount: number;
+  tagGroupsCount: number;
+  settingsUpdated: boolean;
 }
 
 // ── Todos ──────────────────────────────────────────────────────────────

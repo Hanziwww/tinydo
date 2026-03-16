@@ -5,11 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default",
     "notification:default",
     "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
@@ -33,6 +30,7 @@
     "core:window:allow-is-visible",
     "core:window:allow-is-focused",
     "core:tray:default",
-    "dialog:default"
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }
