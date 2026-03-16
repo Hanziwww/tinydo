@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -136,6 +136,7 @@ fn show_main_window(app: &tauri::AppHandle) {
         if let Err(e) = w.set_focus() {
             log::error!("Failed to set focus: {}", e);
         }
+        let _ = w.emit("window-restored", ());
     }
 }
 

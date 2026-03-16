@@ -57,17 +57,72 @@ body {
   font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.5;
-  background-color: var(--s0);
+  background-color: transparent;
   color: var(--t1);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-body.mini-transparent,
-body.mini-transparent #root,
 body.mini-transparent .mini-mode,
 body.mini-transparent .mini-mode > div {
   background: transparent !important;
+}
+
+@keyframes windowAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-window-appear {
+  animation: windowAppear 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes splashPulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  75% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes splashTextFade {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.splash-logo {
+  animation: splashPulse 1.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.splash-text {
+  animation: splashTextFade 1.5s ease both;
 }
 
 ::-webkit-scrollbar {
@@ -98,28 +153,6 @@ input,
 textarea {
   user-select: text;
   -webkit-user-select: text;
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-@keyframes scaleIn {
-  from {
-    transform: scale(0);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
 }
 
 @keyframes fadeIn {

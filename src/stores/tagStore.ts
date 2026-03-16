@@ -52,7 +52,8 @@ export const useTagStore = create<TagState>()((set) => ({
     set((s) => {
       const tags = s.tags.map((t) => (t.id === id ? { ...t, ...updates } : t));
       const updated = tags.find((t) => t.id === id);
-      if (updated) backend.saveTag(updated).catch((e: unknown) => console.error("Failed to save tag:", e));
+      if (updated)
+        backend.saveTag(updated).catch((e: unknown) => console.error("Failed to save tag:", e));
       return { tags };
     });
   },
@@ -66,7 +67,9 @@ export const useTagStore = create<TagState>()((set) => ({
     const group: TagGroup = { id: nanoid(), name, order: 0 };
     set((s) => {
       const updated = { ...group, order: s.tagGroups.length };
-      backend.saveTagGroup(updated).catch((e: unknown) => console.error("Failed to save tag group:", e));
+      backend
+        .saveTagGroup(updated)
+        .catch((e: unknown) => console.error("Failed to save tag group:", e));
       return { tagGroups: [...s.tagGroups, updated] };
     });
     return group;
@@ -77,7 +80,9 @@ export const useTagStore = create<TagState>()((set) => ({
       const tagGroups = s.tagGroups.map((g) => (g.id === id ? { ...g, ...updates } : g));
       const updated = tagGroups.find((g) => g.id === id);
       if (updated)
-        backend.saveTagGroup(updated).catch((e: unknown) => console.error("Failed to save tag group:", e));
+        backend
+          .saveTagGroup(updated)
+          .catch((e: unknown) => console.error("Failed to save tag group:", e));
       return { tagGroups };
     });
   },
@@ -94,6 +99,8 @@ export const useTagStore = create<TagState>()((set) => ({
         return t;
       }),
     }));
-    backend.deleteTagGroup(id).catch((e: unknown) => console.error("Failed to delete tag group:", e));
+    backend
+      .deleteTagGroup(id)
+      .catch((e: unknown) => console.error("Failed to delete tag group:", e));
   },
 }));

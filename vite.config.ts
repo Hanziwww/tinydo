@@ -13,6 +13,16 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          motion: ["motion", "motion/react"],
+          vendor: ["react", "react-dom"],
+        },
+      },
+    },
+  },
   clearScreen: false,
   server: {
     port: 1420,

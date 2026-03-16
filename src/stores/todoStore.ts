@@ -37,15 +37,21 @@ interface TodoState {
 }
 
 function persistTodos(todos: Todo[]) {
-  backend.saveTodos(todos, false).catch((e: unknown) => console.error("Failed to persist todos:", e));
+  backend
+    .saveTodos(todos, false)
+    .catch((e: unknown) => console.error("Failed to persist todos:", e));
 }
 
 function persistArchivedTodos(archived: Todo[]) {
-  backend.saveTodos(archived, true).catch((e: unknown) => console.error("Failed to persist archived:", e));
+  backend
+    .saveTodos(archived, true)
+    .catch((e: unknown) => console.error("Failed to persist archived:", e));
 }
 
 function persistSingleTodo(todo: Todo, archived = false) {
-  backend.saveTodo(todo, archived).catch((e: unknown) => console.error("Failed to persist todo:", e));
+  backend
+    .saveTodo(todo, archived)
+    .catch((e: unknown) => console.error("Failed to persist todo:", e));
 }
 
 function persistDeleteTodo(id: string) {
@@ -349,9 +355,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       reordered.splice(overIdx, 0, moved);
 
       const orderSlots = scopedTodos.map((todo) => todo.order).sort((a, b) => a - b);
-      const nextOrderMap = new Map(
-        reordered.map((todo, index) => [todo.id, orderSlots[index]]),
-      );
+      const nextOrderMap = new Map(reordered.map((todo, index) => [todo.id, orderSlots[index]]));
 
       return {
         todos: s.todos.map((todo) =>
