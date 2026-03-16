@@ -63,6 +63,7 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+body.mini-transparent #root > div,
 body.mini-transparent .mini-mode,
 body.mini-transparent .mini-mode > div {
   background: transparent !important;
