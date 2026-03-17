@@ -14,10 +14,13 @@ interface Props {
   title: string;
   dateLabel: string;
   todos: Todo[];
+  allTodos: Todo[];
   tags: Tag[];
   locale: Locale;
   theme: "dark" | "light";
 }
+
+type PosterRelation = Todo["outgoingRelations"][number];
 
 function LogoSvg({ dark }: { dark: boolean }) {
   const fill = dark ? "#050505" : "#F5F5F5";
@@ -48,10 +51,11 @@ function LogoSvg({ dark }: { dark: boolean }) {
 }
 
 export const PosterPreview = forwardRef<HTMLDivElement, Props>(
-  ({ title, dateLabel, todos, tags, locale, theme }, ref) => {
+  ({ title, dateLabel, todos, allTodos, tags, locale, theme }, ref) => {
     const sorted = [...todos].sort((a, b) => a.order - b.order);
     const active = sorted.filter((td) => !td.completed);
     const completed = sorted.filter((td) => td.completed);
+    const todoTitleMap = new Map(allTodos.map((todo) => [todo.id, todo.title]));
 
     const isDark = theme === "dark";
     const bg = isDark
@@ -136,6 +140,7 @@ export const PosterPreview = forwardRef<HTMLDivElement, Props>(
               <PosterTask
                 key={td.id}
                 todo={td}
+                todoTitleMap={todoTitleMap}
                 tags={tags}
                 locale={locale}
                 index={i + 1}
@@ -171,6 +176,7 @@ export const PosterPreview = forwardRef<HTMLDivElement, Props>(
               <PosterTask
                 key={td.id}
                 todo={td}
+                todoTitleMap={todoTitleMap}
                 tags={tags}
                 locale={locale}
                 done
@@ -219,6 +225,7 @@ PosterPreview.displayName = "PosterPreview";
 
 function PosterTask({
   todo,
+  todoTitleMap,
   tags,
   locale,
   index,
@@ -230,6 +237,7 @@ function PosterTask({
   accentColor,
 }: {
   todo: Todo;
+  todoTitleMap: Map<string, string>;
   tags: Tag[];
   locale: Locale;
   index?: number;
@@ -245,6 +253,11 @@ function PosterTask({
   const time = formatTimeSlots(todo.timeSlots);
   const subs = todo.subtasks;
   const doneCount = subs.filter((st) => st.completed).length;
+  const primaryRelation: PosterRelation | null =
+    todo.outgoingRelations.length > 0 ? todo.outgoingRelations[0] : null;
+  const relationTargetTitle = primaryRelation
+    ? (todoTitleMap.get(primaryRelation.targetTaskId) ?? primaryRelation.targetTaskId)
+    : null;
 
   return (
     <div
@@ -311,6 +324,40 @@ function PosterTask({
         >
           {todo.title}
         </div>
+        {primaryRelation && relationTargetTitle && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 2,
+              minWidth: 0,
+              fontSize: 12,
+              lineHeight: 1.45,
+              color: textSecondary,
+            }}
+          >
+            <span style={{ opacity: 0.6 }}>↳</span>
+            <span style={{ fontWeight: 600 }}>
+              {t(`relation.short.${primaryRelation.relationType}`, locale)}
+            </span>
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {relationTargetTitle}
+            </span>
+            {todo.outgoingRelations.length > 1 && (
+              <span style={{ flexShrink: 0, opacity: 0.7 }}>
+                +{todo.outgoingRelations.length - 1}
+              </span>
+            )}
+          </div>
+        )}
         <div
           style={{
             display: "flex",

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Check, ChevronRight, GripVertical, ListPlus, Trash2 } from "lucide-react";
 import {
   DndContext,
@@ -21,6 +22,7 @@ import {
   getTodayDateKey,
   hexToRgba,
 } from "@/lib/utils";
+import { isTodoCompletedForDate } from "@/lib/todo-helpers";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
@@ -34,6 +36,10 @@ interface Props {
   boardDate?: string;
   index?: number;
 }
+
+type RelationDisplayItem = Todo["outgoingRelations"][number] & {
+  targetTitle: string;
+};
 
 const ENTER_THRESHOLD_MS = 600;
 
@@ -50,6 +56,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const update = useTodoStore((s) => s.updateTodo);
   const remove = useTodoStore((s) => s.deleteTodo);
   const setEdit = useTodoStore((s) => s.setEditingTodoId);
+  const todos = useTodoStore((s) => s.todos);
   const addSubtask = useTodoStore((s) => s.addSubtask);
   const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
   const deleteSubtask = useTodoStore((s) => s.deleteSubtask);
@@ -72,10 +79,23 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const dayIdx = dur > 1 ? getDayIndexInDuration(todo.targetDate, refDate, dur) : null;
 
   const todoTags = tags.filter((tg) => todo.tagIds.includes(tg.id));
+  const relationItems = useMemo<RelationDisplayItem[]>(
+    () =>
+      todo.outgoingRelations.map((relation) => ({
+        ...relation,
+        targetTitle:
+          todos.find((candidate) => candidate.id === relation.targetTaskId)?.title ??
+          relation.targetTaskId,
+      })),
+    [todo.outgoingRelations, todos],
+  );
+  const primaryRelation: RelationDisplayItem | null =
+    relationItems.length > 0 ? relationItems[0] : null;
   const diff = DIFFICULTY_CONFIG[todo.difficulty];
   const od = todo.completed ? 0 : getOverdueDays(todo.targetDate, todayK, todo.durationDays);
   const time = formatTimeSlots(todo.timeSlots);
-  const hasMeta = time || todoTags.length > 0 || od > 0 || dayIdx !== null;
+  const hasMeta =
+    time || todoTags.length > 0 || od > 0 || dayIdx !== null || relationItems.length > 0;
 
   useEffect(() => {
     if (editing) {
@@ -99,12 +119,12 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     deleteTimerRef.current = setTimeout(() => remove(todo.id), 350);
   };
 
-  const isDayDone = dur > 1 ? todo.completedDayKeys.includes(refDate) : todo.completed;
+  const isDayDone = isTodoCompletedForDate(todo, refDate);
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (anim) return;
-    const currentDone = dur > 1 ? todo.completedDayKeys.includes(refDate) : todo.completed;
+    const currentDone = isTodoCompletedForDate(todo, refDate);
     const dir = currentDone ? "uncompleting" : "completing";
     setAnim(dir);
     timerRef.current = setTimeout(
@@ -154,7 +174,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
       className={cn(
         "group relative grid grid-cols-[18px_minmax(0,1fr)_18px] items-start gap-x-3 border-b border-border/60 py-2.5 pl-10 pr-5",
         od > 0 ? "bg-warning/[0.04]" : "hover:bg-surface-2/40",
-        todo.completed && !anim && "opacity-50",
+        isDayDone && !anim && "opacity-50",
         anim === "completing" && "animate-row-complete",
         anim === "uncompleting" && "animate-row-uncomplete",
         deleting && "animate-row-delete",
@@ -257,6 +277,29 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
                   </span>
                 )}
               </button>
+            )}
+          </div>
+        )}
+
+        {primaryRelation && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[13px] leading-5 text-text-3">
+            <span className="shrink-0 text-[12px] leading-none opacity-55">↳</span>
+            <span className="shrink-0 font-medium">
+              {t(`relation.short.${primaryRelation.relationType}`, locale)}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEdit(primaryRelation.targetTaskId);
+              }}
+              title={`${t(`relation.${primaryRelation.relationType}`, locale)} ${primaryRelation.targetTitle}`}
+              className="min-w-0 max-w-[220px] truncate text-left leading-5 transition-colors hover:text-accent"
+            >
+              {primaryRelation.targetTitle}
+            </button>
+            {relationItems.length > 1 && (
+              <span className="shrink-0 opacity-70">+{relationItems.length - 1}</span>
             )}
           </div>
         )}
@@ -535,13 +578,16 @@ function SubtaskList({
                 />
               ))}
             </SortableContext>
-            <DragOverlay dropAnimation={null}>
-              {dragSub ? (
-                <div className="cursor-grabbing rounded-md bg-surface-1 shadow-lg">
-                  <SubtaskRow st={dragSub} onToggle={() => {}} onDelete={() => {}} />
-                </div>
-              ) : null}
-            </DragOverlay>
+            {createPortal(
+              <DragOverlay dropAnimation={null}>
+                {dragSub ? (
+                  <div className="cursor-grabbing rounded-md bg-surface-1 shadow-lg">
+                    <SubtaskRow st={dragSub} onToggle={() => {}} onDelete={() => {}} />
+                  </div>
+                ) : null}
+              </DragOverlay>,
+              document.body,
+            )}
           </DndContext>
           <form
             onSubmit={onAddSubtask}

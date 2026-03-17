@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { Archive, ImageDown } from "lucide-react";
 import { t } from "@/i18n";
+import { isTodoCompletedForDate, isTodoVisibleOnBoard } from "@/lib/todo-helpers";
 import {
   cn,
   formatDate,
@@ -36,21 +37,22 @@ export function StatusBar({ board, boardDate }: Props) {
   const locale = useSettingsStore((s) => s.locale);
   const theme = useSettingsStore((s) => s.theme);
   const todayK = getTodayDateKey();
+  const effectiveBoardDate = board === "today" ? todayK : boardDate;
   const posterRef = useRef<HTMLDivElement>(null);
 
   const scoped = useMemo(() => {
-    let list = todos.filter((td) =>
-      board === "today" ? td.targetDate <= todayK : td.targetDate === boardDate,
-    );
+    let list = todos.filter((todo) => isTodoVisibleOnBoard(todo, board, boardDate, todayK));
     if (filterTagIds.length > 0)
       list = list.filter((td) => filterTagIds.some((id) => td.tagIds.includes(id)));
     return list;
   }, [board, boardDate, filterTagIds, todayK, todos]);
 
-  const activeN = scoped.filter((td) => !td.completed).length;
-  const doneN = scoped.filter((td) => td.completed).length;
+  const activeN = scoped.filter((todo) => !isTodoCompletedForDate(todo, effectiveBoardDate)).length;
+  const doneN = scoped.filter((todo) => isTodoCompletedForDate(todo, effectiveBoardDate)).length;
   const odN = scoped.filter(
-    (td) => !td.completed && getOverdueDays(td.targetDate, todayK, td.durationDays) > 0,
+    (todo) =>
+      !isTodoCompletedForDate(todo, effectiveBoardDate) &&
+      getOverdueDays(todo.targetDate, todayK, todo.durationDays) > 0,
   ).length;
 
   const posterTitle =
@@ -130,6 +132,7 @@ export function StatusBar({ board, boardDate }: Props) {
           title={posterTitle}
           dateLabel={posterDateLabel}
           todos={scoped}
+          allTodos={todos}
           tags={tags}
           locale={locale}
           theme={theme}

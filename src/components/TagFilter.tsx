@@ -1,4 +1,5 @@
 import { t } from "@/i18n";
+import { buildTagSections } from "@/lib/tag-sections";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useTodoStore } from "@/stores/todoStore";
@@ -13,19 +14,22 @@ export function TagFilter() {
   const clearFilterTags = useTodoStore((s) => s.clearFilterTags);
   if (tags.length === 0) return null;
 
-  const groups = tagGroups
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map((g) => ({ group: g, tags: tags.filter((tg) => tg.groupId === g.id) }))
-    .filter((g) => g.tags.length > 0);
-  const ungrouped = tags.filter((tg) => tg.groupId === null);
+  const sections = buildTagSections(tags, tagGroups);
 
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
-      {groups.map(({ group, tags: gTags }) => (
-        <div key={group.id} className="flex items-center gap-3">
-          <span className="text-[15px] font-semibold text-text-3">{group.name}</span>
-          {gTags.map((tg) => (
+      {sections.map(({ id, group, tags: sectionTags }) => (
+        <div key={id} className="flex items-center gap-3">
+          {group ? (
+            <span className="text-[15px] font-semibold text-text-3">{group.name}</span>
+          ) : (
+            tagGroups.length > 0 && (
+              <span className="text-[15px] font-semibold text-text-3">
+                {t("tag.ungrouped", locale)}
+              </span>
+            )
+          )}
+          {sectionTags.map((tg) => (
             <TagBadge
               key={tg.id}
               tag={tg}
@@ -35,23 +39,6 @@ export function TagFilter() {
           ))}
         </div>
       ))}
-      {ungrouped.length > 0 && (
-        <div className="flex items-center gap-3">
-          {tagGroups.length > 0 && (
-            <span className="text-[15px] font-semibold text-text-3">
-              {t("tag.ungrouped", locale)}
-            </span>
-          )}
-          {ungrouped.map((tg) => (
-            <TagBadge
-              key={tg.id}
-              tag={tg}
-              selected={filterTagIds.includes(tg.id)}
-              onClick={() => toggleFilterTag(tg.id)}
-            />
-          ))}
-        </div>
-      )}
       {filterTagIds.length > 0 && (
         <button
           type="button"

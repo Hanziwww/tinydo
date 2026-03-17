@@ -105,6 +105,37 @@ impl TimeSlot {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskRelationType {
+    DependsOn,
+    Blocks,
+    RelatedTo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRelation {
+    pub id: String,
+    pub target_task_id: String,
+    pub relation_type: TaskRelationType,
+}
+
+impl TaskRelation {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "关联 ID")?;
+        validate_id(&self.target_task_id, "关联目标任务 ID")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TodoHistoryKind {
+    Completed,
+    DailyProgress,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Todo {
@@ -120,7 +151,18 @@ pub struct Todo {
     pub created_at: f64,
     pub subtasks: Vec<SubTask>,
     pub duration_days: u32,
+    #[serde(default)]
     pub completed_day_keys: Vec<String>,
+    #[serde(default)]
+    pub archived_day_keys: Vec<String>,
+    #[serde(default)]
+    pub outgoing_relations: Vec<TaskRelation>,
+    #[serde(default)]
+    pub history_date: Option<String>,
+    #[serde(default)]
+    pub history_source_todo_id: Option<String>,
+    #[serde(default)]
+    pub history_kind: Option<TodoHistoryKind>,
 }
 
 impl Todo {
@@ -158,6 +200,12 @@ impl Todo {
             self.subtasks.iter().map(|subtask| subtask.id.as_str()),
             "子任务 ID",
         )?;
+        ensure_unique_ids(
+            self.outgoing_relations
+                .iter()
+                .map(|relation| relation.id.as_str()),
+            "任务关联 ID",
+        )?;
 
         for slot in &self.time_slots {
             slot.validate()?;
@@ -165,8 +213,23 @@ impl Todo {
         for subtask in &self.subtasks {
             subtask.validate()?;
         }
+        for relation in &self.outgoing_relations {
+            relation.validate()?;
+            if relation.target_task_id == self.id {
+                return Err(AppError::custom("任务不能关联自己"));
+            }
+        }
         for completed_day in &self.completed_day_keys {
             validate_date_key(completed_day, "完成日期")?;
+        }
+        for archived_day in &self.archived_day_keys {
+            validate_date_key(archived_day, "归档日期")?;
+        }
+        if let Some(history_date) = &self.history_date {
+            validate_date_key(history_date, "历史日期")?;
+        }
+        if let Some(history_source_todo_id) = &self.history_source_todo_id {
+            validate_id(history_source_todo_id, "历史来源任务 ID")?;
         }
 
         Ok(())
@@ -397,6 +460,11 @@ mod tests {
             }],
             duration_days: 1,
             completed_day_keys: vec![],
+            archived_day_keys: vec![],
+            outgoing_relations: vec![],
+            history_date: None,
+            history_source_todo_id: None,
+            history_kind: None,
         };
         let json = serde_json::to_string(&todo).unwrap();
         assert!(json.contains("tagIds"));
@@ -476,6 +544,11 @@ mod tests {
             subtasks: vec![],
             duration_days: 1,
             completed_day_keys: vec![],
+            archived_day_keys: vec![],
+            outgoing_relations: vec![],
+            history_date: None,
+            history_source_todo_id: None,
+            history_kind: None,
         };
         assert!(todo.validate().is_err());
     }

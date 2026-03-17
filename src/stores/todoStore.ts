@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
-import type { Todo, ViewMode, Difficulty, TimeSlot } from "@/types";
+import { withTodoDefaults, stripRelationsToTarget } from "@/lib/todo-helpers";
+import type {
+  Todo,
+  ViewMode,
+  Difficulty,
+  TimeSlot,
+  TaskRelationType,
+  TodoHistoryKind,
+} from "@/types";
 import { getTodayDateKey, getTomorrowDateKey, shiftDateKey } from "@/lib/utils";
 import * as backend from "@/lib/backend";
 import { showErrorNotice } from "@/lib/errorNotice";
@@ -27,11 +35,14 @@ interface TodoState {
   removeTagFromAllTodos: (tagId: string) => void;
   setEditingTodoId: (id: string | null) => void;
   addSubtask: (todoId: string, title: string) => void;
+  updateSubtaskTitle: (todoId: string, subtaskId: string, title: string) => void;
   toggleSubtask: (todoId: string, subtaskId: string) => void;
   deleteSubtask: (todoId: string, subtaskId: string) => void;
   addTimeSlot: (todoId: string) => void;
   removeTimeSlot: (todoId: string, slotId: string) => void;
   updateTimeSlot: (todoId: string, slotId: string, updates: Partial<Omit<TimeSlot, "id">>) => void;
+  addRelation: (todoId: string, targetTaskId: string, relationType: TaskRelationType) => void;
+  deleteRelation: (todoId: string, relationId: string) => void;
   splitOverdueSubtasks: (todayKey: string) => void;
   importTodos: (incoming: Todo[]) => number;
   importArchivedTodos: (incoming: Todo[]) => number;
@@ -56,12 +67,28 @@ function persistSingleTodo(todo: Todo, archived = false) {
   return backend.saveTodo(todo, archived);
 }
 
+function persistTodoBatch(todos: Todo[], archived = false) {
+  return Promise.all(todos.map((todo) => persistSingleTodo(todo, archived)));
+}
+
 function persistDeleteTodo(id: string) {
   return backend.deleteTodo(id);
 }
 
-function persistArchiveTodos(ids: string[]) {
-  return backend.archiveTodos(ids);
+function createHistoryTodo(
+  todo: Todo,
+  historyDate: string,
+  historyKind: TodoHistoryKind,
+  id = todo.id,
+) {
+  return withTodoDefaults({
+    ...todo,
+    id,
+    completed: true,
+    historyDate,
+    historySourceTodoId: todo.historySourceTodoId ?? todo.id,
+    historyKind,
+  });
 }
 
 const now = Date.now();
@@ -85,6 +112,11 @@ const SEED_TODOS: Todo[] = [
     subtasks: [],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s2",
@@ -105,6 +137,11 @@ const SEED_TODOS: Todo[] = [
     ],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s3",
@@ -124,6 +161,11 @@ const SEED_TODOS: Todo[] = [
     ],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s4",
@@ -144,6 +186,11 @@ const SEED_TODOS: Todo[] = [
     ],
     durationDays: 3,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s5",
@@ -159,6 +206,11 @@ const SEED_TODOS: Todo[] = [
     subtasks: [],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s6",
@@ -178,6 +230,11 @@ const SEED_TODOS: Todo[] = [
     ],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s7",
@@ -193,6 +250,11 @@ const SEED_TODOS: Todo[] = [
     subtasks: [],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s8",
@@ -208,6 +270,11 @@ const SEED_TODOS: Todo[] = [
     subtasks: [],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s9",
@@ -228,6 +295,11 @@ const SEED_TODOS: Todo[] = [
     ],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
   {
     id: "s10",
@@ -247,6 +319,11 @@ const SEED_TODOS: Todo[] = [
     ],
     durationDays: 1,
     completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
   },
 ];
 
@@ -260,7 +337,12 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   editingTodoId: null,
   _hydrated: false,
 
-  _hydrate: (todos, archivedTodos) => set({ todos, archivedTodos, _hydrated: true }),
+  _hydrate: (todos, archivedTodos) =>
+    set({
+      todos: todos.map(withTodoDefaults),
+      archivedTodos: archivedTodos.map(withTodoDefaults),
+      _hydrated: true,
+    }),
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setEditingTodoId: (id) => set({ editingTodoId: id }),
@@ -293,6 +375,11 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       subtasks: [],
       durationDays: 1,
       completedDayKeys: [],
+      archivedDayKeys: [],
+      outgoingRelations: [],
+      historyDate: null,
+      historySourceTodoId: null,
+      historyKind: null,
     };
     set((s) => ({ todos: [todo, ...s.todos] }));
     void persistSingleTodo(todo).catch((error: unknown) => {
@@ -345,13 +432,32 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   deleteTodo: (id) => {
     const previous = {
       todos: get().todos,
+      archivedTodos: get().archivedTodos,
       editingTodoId: get().editingTodoId,
     };
+    const updatedActive = previous.todos
+      .filter((todo) => todo.id !== id)
+      .map((todo) => stripRelationsToTarget(todo, id));
+    const updatedArchived = previous.archivedTodos.map((todo) => stripRelationsToTarget(todo, id));
+    const activeRelationCleanup = previous.todos
+      .filter(
+        (todo) =>
+          todo.id !== id && todo.outgoingRelations.some((relation) => relation.targetTaskId === id),
+      )
+      .map((todo) => stripRelationsToTarget(todo, id));
+    const archivedRelationCleanup = previous.archivedTodos
+      .filter((todo) => todo.outgoingRelations.some((relation) => relation.targetTaskId === id))
+      .map((todo) => stripRelationsToTarget(todo, id));
     set((s) => ({
-      todos: s.todos.filter((t) => t.id !== id),
+      todos: updatedActive,
+      archivedTodos: updatedArchived,
       editingTodoId: s.editingTodoId === id ? null : s.editingTodoId,
     }));
-    void persistDeleteTodo(id).catch((error: unknown) => rollbackTodoState(previous, error));
+    void Promise.all([
+      persistDeleteTodo(id),
+      persistTodoBatch(activeRelationCleanup, false),
+      persistTodoBatch(archivedRelationCleanup, true),
+    ]).catch((error: unknown) => rollbackTodoState(previous, error));
   },
 
   reorderTodos: (activeId, overId, scopedIds) => {
@@ -416,18 +522,35 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       todos: get().todos,
       archivedTodos: get().archivedTodos,
     };
-    const done = get().todos.filter((t) => t.completed);
+    const historyDate = getTodayDateKey();
+    const done = get()
+      .todos.filter((t) => t.completed)
+      .map((t) => createHistoryTodo(t, historyDate, "completed"));
     if (done.length === 0) return;
-    set((s) => {
-      const remaining = s.todos.filter((t) => !t.completed);
-      return {
-        todos: remaining,
-        archivedTodos: [...s.archivedTodos, ...done],
-      };
-    });
-    void persistArchiveTodos(done.map((t) => t.id)).catch((error: unknown) =>
-      rollbackTodoState(previous, error),
+    const doneIds = new Set(done.map((todo) => todo.id));
+    set((s) => ({
+      todos: s.todos
+        .filter((t) => !t.completed)
+        .map((todo) =>
+          Array.from(doneIds).reduce(
+            (current, archivedId) => stripRelationsToTarget(current, archivedId),
+            todo,
+          ),
+        ),
+      archivedTodos: [...s.archivedTodos, ...done],
+    }));
+    const nextState = get();
+    const relationCleanup = nextState.todos.filter((todo) =>
+      previous.todos.some(
+        (previousTodo) =>
+          previousTodo.id === todo.id &&
+          previousTodo.outgoingRelations.some((relation) => doneIds.has(relation.targetTaskId)),
+      ),
     );
+    void Promise.all([
+      persistTodoBatch(done, true),
+      persistTodoBatch(relationCleanup, false),
+    ]).catch((error: unknown) => rollbackTodoState(previous, error));
   },
 
   archiveBoardCompleted: (boardDate) => {
@@ -437,19 +560,79 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     };
     const todayK = getTodayDateKey();
     const isToday = boardDate === todayK;
-    const done = get().todos.filter((t) => {
-      if (!t.completed) return false;
-      return isToday ? t.targetDate <= todayK : t.targetDate === boardDate;
-    });
-    if (done.length === 0) return;
-    const doneIds = new Set(done.map((t) => t.id));
-    set((s) => ({
-      todos: s.todos.filter((t) => !doneIds.has(t.id)),
-      archivedTodos: [...s.archivedTodos, ...done],
-    }));
-    void persistArchiveTodos(done.map((t) => t.id)).catch((error: unknown) =>
-      rollbackTodoState(previous, error),
+    const dailySnapshotKeys = new Set(
+      previous.archivedTodos
+        .filter((todo) => todo.historyKind === "dailyProgress")
+        .map(
+          (todo) => `${todo.historySourceTodoId ?? todo.id}:${todo.historyDate ?? todo.targetDate}`,
+        ),
     );
+
+    const fullArchives = previous.todos.filter((todo) => {
+      if (!todo.completed) return false;
+      if (isToday) return todo.targetDate <= todayK;
+      const endDate = shiftDateKey(todo.targetDate, todo.durationDays - 1);
+      return todo.targetDate <= boardDate && endDate >= boardDate;
+    });
+    const dailySnapshots = previous.todos.flatMap((todo) => {
+      if (todo.durationDays <= 1 || todo.completed) return [];
+      if (!todo.completedDayKeys.includes(boardDate) || todo.archivedDayKeys.includes(boardDate))
+        return [];
+      const snapshotKey = `${todo.id}:${boardDate}`;
+      if (dailySnapshotKeys.has(snapshotKey)) return [];
+      return [createHistoryTodo(todo, boardDate, "dailyProgress", nanoid())];
+    });
+
+    if (fullArchives.length === 0 && dailySnapshots.length === 0) return;
+
+    const fullArchiveIds = new Set(fullArchives.map((todo) => todo.id));
+    const dailySnapshotSourceIds = new Set(
+      dailySnapshots.map((todo) => todo.historySourceTodoId ?? todo.id),
+    );
+
+    set((s) => ({
+      todos: s.todos
+        .filter((todo) => !fullArchiveIds.has(todo.id))
+        .map((todo) => {
+          const withArchivedDay = dailySnapshotSourceIds.has(todo.id)
+            ? withTodoDefaults({
+                ...todo,
+                archivedDayKeys: [...todo.archivedDayKeys, boardDate],
+              })
+            : todo;
+          return Array.from(fullArchiveIds).reduce(
+            (current, archivedId) => stripRelationsToTarget(current, archivedId),
+            withArchivedDay,
+          );
+        }),
+      archivedTodos: [
+        ...s.archivedTodos,
+        ...fullArchives.map((todo) => createHistoryTodo(todo, boardDate, "completed")),
+        ...dailySnapshots,
+      ],
+    }));
+
+    const nextState = get();
+    const updatedSources = nextState.todos.filter(
+      (todo) =>
+        dailySnapshotSourceIds.has(todo.id) ||
+        previous.todos.some(
+          (previousTodo) =>
+            previousTodo.id === todo.id &&
+            previousTodo.outgoingRelations.some((relation) =>
+              fullArchiveIds.has(relation.targetTaskId),
+            ),
+        ),
+    );
+    const archivedToSave = [
+      ...fullArchives.map((todo) => createHistoryTodo(todo, boardDate, "completed")),
+      ...dailySnapshots,
+    ];
+
+    void Promise.all([
+      persistTodoBatch(updatedSources, false),
+      persistTodoBatch(archivedToSave, true),
+    ]).catch((error: unknown) => rollbackTodoState(previous, error));
   },
 
   removeTagFromAllTodos: (tagId) => {
@@ -476,6 +659,27 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
+  },
+
+  updateSubtaskTitle: (todoId, subtaskId, title) => {
+    const previousTodos = get().todos;
+    set((s) => ({
+      todos: s.todos.map((todo) => {
+        if (todo.id !== todoId) return todo;
+        return {
+          ...todo,
+          subtasks: todo.subtasks.map((subtask) =>
+            subtask.id === subtaskId ? { ...subtask, title } : subtask,
+          ),
+        };
+      }),
+    }));
+    const updated = get().todos.find((todo) => todo.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
         rollbackTodoState({ todos: previousTodos }, error);
@@ -513,6 +717,59 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === todoId);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
+  },
+
+  addRelation: (todoId, targetTaskId, relationType) => {
+    const previousTodos = get().todos;
+    set((s) => ({
+      todos: s.todos.map((todo) => {
+        if (todo.id !== todoId) return todo;
+        if (!s.todos.some((candidate) => candidate.id === targetTaskId)) return todo;
+        if (
+          todo.id === targetTaskId ||
+          todo.outgoingRelations.some(
+            (relation) =>
+              relation.targetTaskId === targetTaskId && relation.relationType === relationType,
+          )
+        ) {
+          return todo;
+        }
+        return {
+          ...todo,
+          outgoingRelations: [
+            ...todo.outgoingRelations,
+            { id: nanoid(), targetTaskId, relationType },
+          ],
+        };
+      }),
+    }));
+    const updated = get().todos.find((todo) => todo.id === todoId);
+    if (updated) {
+      void persistSingleTodo(updated).catch((error: unknown) => {
+        rollbackTodoState({ todos: previousTodos }, error);
+      });
+    }
+  },
+
+  deleteRelation: (todoId, relationId) => {
+    const previousTodos = get().todos;
+    set((s) => ({
+      todos: s.todos.map((todo) => {
+        if (todo.id !== todoId) return todo;
+        return {
+          ...todo,
+          outgoingRelations: todo.outgoingRelations.filter(
+            (relation) => relation.id !== relationId,
+          ),
+        };
+      }),
+    }));
+    const updated = get().todos.find((todo) => todo.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
         rollbackTodoState({ todos: previousTodos }, error);
@@ -578,13 +835,16 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     set((s) => {
       const existingMap = new Map(s.todos.map((t) => [t.id, t]));
       for (const t of incoming) {
-        existingMap.set(t.id, {
-          ...t,
-          subtasks: t.subtasks.map((st) => ({ ...st, order: st.order })),
-          timeSlots: t.timeSlots,
-          durationDays: t.durationDays,
-          completedDayKeys: t.completedDayKeys,
-        });
+        existingMap.set(
+          t.id,
+          withTodoDefaults({
+            ...t,
+            subtasks: t.subtasks.map((st) => ({ ...st, order: st.order })),
+            timeSlots: t.timeSlots,
+            durationDays: t.durationDays,
+            completedDayKeys: t.completedDayKeys,
+          }),
+        );
         count++;
       }
       return { todos: Array.from(existingMap.values()) };
@@ -601,13 +861,16 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     set((s) => {
       const existingMap = new Map(s.archivedTodos.map((t) => [t.id, t]));
       for (const t of incoming) {
-        existingMap.set(t.id, {
-          ...t,
-          subtasks: t.subtasks.map((st) => ({ ...st, order: st.order })),
-          timeSlots: t.timeSlots,
-          durationDays: t.durationDays,
-          completedDayKeys: t.completedDayKeys,
-        });
+        existingMap.set(
+          t.id,
+          withTodoDefaults({
+            ...t,
+            subtasks: t.subtasks.map((st) => ({ ...st, order: st.order })),
+            timeSlots: t.timeSlots,
+            durationDays: t.durationDays,
+            completedDayKeys: t.completedDayKeys,
+          }),
+        );
         count++;
       }
       return { archivedTodos: Array.from(existingMap.values()) };
@@ -640,26 +903,31 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         const done = subs.filter((st) => st.completed);
         const pending = subs.filter((st) => !st.completed);
         if (done.length > 0) {
-          next.push({
-            ...td,
-            id: nanoid(),
-            title: td.title,
-            completed: true,
-            subtasks: done,
-            targetDate: yesterdayKey,
-            completedDayKeys: td.completedDayKeys,
-          });
+          next.push(
+            withTodoDefaults({
+              ...td,
+              id: nanoid(),
+              title: td.title,
+              completed: true,
+              subtasks: done,
+              targetDate: yesterdayKey,
+              completedDayKeys: td.completedDayKeys,
+              outgoingRelations: [],
+            }),
+          );
         }
         if (pending.length > 0) {
-          next.push({
-            ...td,
-            targetDate: todayKey,
-            completed: false,
-            subtasks: pending,
-            completedDayKeys: td.completedDayKeys,
-          });
+          next.push(
+            withTodoDefaults({
+              ...td,
+              targetDate: todayKey,
+              completed: false,
+              subtasks: pending,
+              completedDayKeys: td.completedDayKeys,
+            }),
+          );
         } else if (done.length === 0) {
-          next.push({ ...td, targetDate: todayKey });
+          next.push(withTodoDefaults({ ...td, targetDate: todayKey }));
         }
       }
       return { todos: next };

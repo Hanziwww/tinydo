@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { getTodoHistoryDate } from "@/lib/todo-helpers";
 import { cn, DIFFICULTY_CONFIG, formatTimeSlots, hexToRgba } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
@@ -39,7 +40,7 @@ export function HistoryPanel() {
   const archivedByDate = useMemo(() => {
     const map = new Map<string, typeof archivedTodos>();
     for (const td of archivedTodos) {
-      const key = td.targetDate;
+      const key = getTodoHistoryDate(td);
       const existing = map.get(key);
       if (existing) {
         existing.push(td);

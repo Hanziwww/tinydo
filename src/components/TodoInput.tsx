@@ -25,6 +25,7 @@ export function TodoInput({ board, targetDate, disabled = false }: Props) {
   const unlockHour = useSettingsStore((s) => s.tomorrowPlanningUnlockHour);
   const addTodo = useTodoStore((s) => s.addTodo);
   const tags = useTagStore((s) => s.tags);
+  const tagGroups = useTagStore((s) => s.tagGroups);
   const addTag = useTagStore((s) => s.addTag);
 
   useEffect(() => {
@@ -149,7 +150,9 @@ export function TodoInput({ board, targetDate, disabled = false }: Props) {
                     className="flex w-full items-center gap-3 px-4 py-3 text-left text-[16px] font-medium text-accent hover:bg-accent-soft"
                   >
                     <Plus size={16} />
-                    {t("tag.create", locale, { name: search.trim() })}
+                    {t(tagGroups.length > 0 ? "tag.create_ungrouped" : "tag.create", locale, {
+                      name: search.trim(),
+                    })}
                   </button>
                 )}
                 {!search && filtered.length === 0 && (

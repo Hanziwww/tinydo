@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Check, ChevronRight, Maximize2, Pin, PinOff, X } from "lucide-react";
+import { isTodoArchivedForDate, isTodoCompletedForDate } from "@/lib/todo-helpers";
 import {
   cn,
   formatTimeSlots,
@@ -36,8 +37,7 @@ export function MiniMode({ onExpand }: Props) {
     () =>
       todos
         .filter((td) => {
-          if (td.completed) return false;
-          if (td.durationDays > 1 && td.completedDayKeys.includes(todayK)) return false;
+          if (isTodoArchivedForDate(td, todayK) || isTodoCompletedForDate(td, todayK)) return false;
           return td.targetDate <= todayK;
         })
         .sort((a, b) => a.order - b.order),

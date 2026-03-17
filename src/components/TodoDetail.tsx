@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Check, Clock, GripVertical, Plus, Trash2, X } from "lucide-react";
 import {
   DndContext,
@@ -13,12 +14,13 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { t } from "@/i18n";
+import { withTodoDefaults } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { cn, DIFFICULTY_CONFIG, getOverdueDays, getTodayDateKey } from "@/lib/utils";
 import { TagBadge } from "./TagBadge";
-import type { Difficulty, Locale, SubTask, TimeSlot } from "@/types";
+import type { Difficulty, Locale, SubTask, TaskRelationType, TimeSlot, Todo } from "@/types";
 
 export function TodoDetail() {
   const locale = useSettingsStore((s) => s.locale);
@@ -28,12 +30,15 @@ export function TodoDetail() {
   const setEditId = useTodoStore((s) => s.setEditingTodoId);
   const update = useTodoStore((s) => s.updateTodo);
   const addSubtask = useTodoStore((s) => s.addSubtask);
+  const updateSubtaskTitle = useTodoStore((s) => s.updateSubtaskTitle);
   const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
   const deleteSubtask = useTodoStore((s) => s.deleteSubtask);
   const reorderSubtasks = useTodoStore((s) => s.reorderSubtasks);
   const addTimeSlot = useTodoStore((s) => s.addTimeSlot);
   const removeTimeSlot = useTodoStore((s) => s.removeTimeSlot);
   const updateTimeSlot = useTodoStore((s) => s.updateTimeSlot);
+  const addRelation = useTodoStore((s) => s.addRelation);
+  const deleteRelation = useTodoStore((s) => s.deleteRelation);
   const todos = useTodoStore((s) => s.todos);
   const tags = useTagStore((s) => s.tags);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -41,7 +46,11 @@ export function TodoDetail() {
   const [subtaskInput, setSubtaskInput] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
-  const todo = todos.find((td) => td.id === editId);
+  const todo = useMemo(() => {
+    if (!editId) return null;
+    const matched = todos.find((td) => td.id === editId);
+    return matched ? withTodoDefaults(matched) : null;
+  }, [editId, todos]);
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -184,6 +193,7 @@ export function TodoDetail() {
             subtaskInput={subtaskInput}
             setSubtaskInput={setSubtaskInput}
             addSubtask={addSubtask}
+            updateSubtaskTitle={updateSubtaskTitle}
             toggleSubtask={toggleSubtask}
             deleteSubtask={deleteSubtask}
             reorderSubtasks={reorderSubtasks}
@@ -274,6 +284,16 @@ export function TodoDetail() {
             </div>
           </div>
         </div>
+
+        <DetailRelationSection
+          key={todo.id}
+          todo={todo}
+          todos={todos}
+          locale={locale}
+          addRelation={addRelation}
+          deleteRelation={deleteRelation}
+          openTodo={setEditId}
+        />
       </div>
     </div>
   );
@@ -283,6 +303,7 @@ function DetailSortableSubtask({
   st,
   todoId,
   toggleSubtask,
+  updateSubtaskTitle,
   onDelete,
   isDeleting,
   isEntering,
@@ -290,13 +311,28 @@ function DetailSortableSubtask({
   st: SubTask;
   todoId: string;
   toggleSubtask: (todoId: string, stId: string) => void;
+  updateSubtaskTitle: (todoId: string, stId: string, title: string) => void;
   onDelete: () => void;
   isDeleting?: boolean;
   isEntering?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(st.title);
+
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: st.id,
   });
+
+  function save() {
+    const nextTitle = value.trim();
+    if (nextTitle && nextTitle !== st.title) {
+      updateSubtaskTitle(todoId, st.id, nextTitle);
+    } else {
+      setValue(st.title);
+    }
+    setEditing(false);
+  }
+
   return (
     <div
       ref={setNodeRef}
@@ -330,11 +366,36 @@ function DetailSortableSubtask({
       >
         {st.completed && <Check size={10} strokeWidth={2.5} />}
       </button>
-      <span
-        className={cn("flex-1 text-[15px] text-text-1", st.completed && "line-through text-text-3")}
-      >
-        {st.title}
-      </span>
+      {editing ? (
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") {
+              setValue(st.title);
+              setEditing(false);
+            }
+          }}
+          className="flex-1 bg-transparent text-[15px] text-text-1 outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          onDoubleClick={() => {
+            setValue(st.title);
+            setEditing(true);
+          }}
+          className={cn(
+            "flex-1 text-left text-[15px] text-text-1",
+            st.completed && "line-through text-text-3",
+          )}
+        >
+          {st.title}
+        </button>
+      )}
       <button
         type="button"
         onClick={() => {
@@ -354,6 +415,7 @@ function DetailSubtaskList({
   subtaskInput,
   setSubtaskInput,
   addSubtask,
+  updateSubtaskTitle,
   toggleSubtask,
   deleteSubtask,
   reorderSubtasks,
@@ -363,6 +425,7 @@ function DetailSubtaskList({
   subtaskInput: string;
   setSubtaskInput: (v: string) => void;
   addSubtask: (todoId: string, title: string) => void;
+  updateSubtaskTitle: (todoId: string, stId: string, title: string) => void;
   toggleSubtask: (todoId: string, stId: string) => void;
   deleteSubtask: (todoId: string, stId: string) => void;
   reorderSubtasks: (todoId: string, activeId: string, overId: string) => void;
@@ -422,20 +485,24 @@ function DetailSubtaskList({
                 st={st}
                 todoId={todo.id}
                 toggleSubtask={toggleSubtask}
+                updateSubtaskTitle={updateSubtaskTitle}
                 onDelete={() => handleDeleteSubtask(st.id)}
                 isDeleting={deletingSubId === st.id}
                 isEntering={enteringIds.has(st.id)}
               />
             ))}
           </SortableContext>
-          <DragOverlay dropAnimation={null}>
-            {dragSub ? (
-              <div className="flex items-center gap-2 rounded bg-surface-1 px-2 py-1 shadow-lg">
-                <GripVertical size={12} className="text-text-3" />
-                <span className="text-[15px] text-text-1">{dragSub.title}</span>
-              </div>
-            ) : null}
-          </DragOverlay>
+          {createPortal(
+            <DragOverlay dropAnimation={null}>
+              {dragSub ? (
+                <div className="flex items-center gap-2 rounded bg-surface-1 px-2 py-1 shadow-lg">
+                  <GripVertical size={12} className="text-text-3" />
+                  <span className="text-[15px] text-text-1">{dragSub.title}</span>
+                </div>
+              ) : null}
+            </DragOverlay>,
+            document.body,
+          )}
         </DndContext>
         <form
           onSubmit={(e) => {
@@ -462,6 +529,133 @@ function DetailSubtaskList({
             {t("subtask.add", locale)}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function DetailRelationSection({
+  todo,
+  todos,
+  locale,
+  addRelation,
+  deleteRelation,
+  openTodo,
+}: {
+  todo: Todo;
+  todos: Todo[];
+  locale: Locale;
+  addRelation: (todoId: string, targetTaskId: string, relationType: TaskRelationType) => void;
+  deleteRelation: (todoId: string, relationId: string) => void;
+  openTodo: (id: string | null) => void;
+}) {
+  const [relationSearch, setRelationSearch] = useState("");
+  const [relationType, setRelationType] = useState<TaskRelationType>("dependsOn");
+  const relations = useMemo(
+    () =>
+      todo.outgoingRelations.map((relation) => ({
+        relation,
+        target: todos.find((candidate) => candidate.id === relation.targetTaskId) ?? null,
+      })),
+    [todo.outgoingRelations, todos],
+  );
+
+  const relationCandidates = useMemo(() => {
+    const query = relationSearch.trim().toLowerCase();
+    return todos
+      .filter((candidate) => {
+        if (candidate.id === todo.id) return false;
+        if (
+          todo.outgoingRelations.some(
+            (relation) =>
+              relation.targetTaskId === candidate.id && relation.relationType === relationType,
+          )
+        ) {
+          return false;
+        }
+        return query.length === 0 || candidate.title.toLowerCase().includes(query);
+      })
+      .sort((a, b) => a.order - b.order)
+      .slice(0, 6);
+  }, [relationSearch, relationType, todo.id, todo.outgoingRelations, todos]);
+
+  return (
+    <div>
+      <label className="mb-1.5 block text-[15px] font-medium text-text-2">
+        {t("detail.relations", locale)}
+      </label>
+
+      <div className="space-y-2">
+        {relations.length === 0 ? (
+          <p className="text-[14px] text-text-3">{t("relation.none", locale)}</p>
+        ) : (
+          relations.map(({ relation, target }) => (
+            <div
+              key={relation.id}
+              className="flex items-center gap-2 border border-border bg-surface-2 px-3 py-2"
+            >
+              <span className="shrink-0 bg-accent/10 px-2 py-1 text-[12px] font-medium text-accent">
+                {t(`relation.${relation.relationType}`, locale)}
+              </span>
+              <button
+                type="button"
+                onClick={() => target && openTodo(target.id)}
+                className="min-w-0 flex-1 text-left text-[14px] text-text-1 hover:text-accent"
+              >
+                <span className="truncate">{target?.title ?? relation.targetTaskId}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteRelation(todo.id, relation.id)}
+                className="shrink-0 p-1 text-text-3 hover:text-danger"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))
+        )}
+
+        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
+          <select
+            value={relationType}
+            onChange={(e) => setRelationType(e.target.value as TaskRelationType)}
+            className="border border-border bg-surface-2 px-3 py-2 text-[14px] text-text-1 outline-none"
+          >
+            {(["dependsOn", "blocks", "relatedTo"] as TaskRelationType[]).map((type) => (
+              <option key={type} value={type}>
+                {t(`relation.${type}`, locale)}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={relationSearch}
+            onChange={(e) => setRelationSearch(e.target.value)}
+            placeholder={t("relation.search", locale)}
+            className="border border-border bg-surface-2 px-3 py-2 text-[14px] text-text-1 outline-none placeholder:text-text-3"
+          />
+        </div>
+
+        <div className="max-h-40 overflow-y-auto border border-border bg-surface-2">
+          {relationCandidates.length === 0 ? (
+            <p className="px-3 py-2 text-[14px] text-text-3">{t("relation.no_targets", locale)}</p>
+          ) : (
+            relationCandidates.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                onClick={() => {
+                  addRelation(todo.id, candidate.id, relationType);
+                  setRelationSearch("");
+                }}
+                className="flex w-full items-center gap-2 border-b border-border/60 px-3 py-2 text-left text-[14px] text-text-1 transition-colors last:border-b-0 hover:bg-surface-3"
+              >
+                <Plus size={14} className="shrink-0 text-accent" />
+                <span className="truncate">{candidate.title}</span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::models::{
     ensure_unique_ids, ExportEnvelope, ExportSettings, ImportResult, Settings, SubTask, Tag,
-    TagGroup, TimeSlot, Todo,
+    TagGroup, TaskRelation, TimeSlot, Todo, TodoHistoryKind,
 };
 use crate::reminders;
 
@@ -122,6 +122,16 @@ struct ImportedTodo {
     duration_days: u32,
     #[serde(default)]
     completed_day_keys: Vec<String>,
+    #[serde(default)]
+    archived_day_keys: Vec<String>,
+    #[serde(default)]
+    outgoing_relations: Vec<TaskRelation>,
+    #[serde(default)]
+    history_date: Option<String>,
+    #[serde(default)]
+    history_source_todo_id: Option<String>,
+    #[serde(default)]
+    history_kind: Option<TodoHistoryKind>,
 }
 
 #[derive(Debug, Default)]
@@ -250,6 +260,11 @@ fn normalize_todo(raw: &serde_json::Value) -> Result<Todo, AppError> {
         subtasks: imported.subtasks.into_iter().map(Into::into).collect(),
         duration_days: imported.duration_days,
         completed_day_keys: imported.completed_day_keys,
+        archived_day_keys: imported.archived_day_keys,
+        outgoing_relations: imported.outgoing_relations,
+        history_date: imported.history_date,
+        history_source_todo_id: imported.history_source_todo_id,
+        history_kind: imported.history_kind,
     };
     todo.validate()?;
     Ok(todo)
@@ -292,6 +307,22 @@ fn validate_import_payload(
                 return Err(AppError::custom(format!(
                     "标签 {} 引用了不存在的标签组 {}",
                     tag.id, group_id
+                )));
+            }
+        }
+    }
+
+    let todo_ids = todos
+        .iter()
+        .map(|todo| todo.id.as_str())
+        .chain(archived_todos.iter().map(|todo| todo.id.as_str()))
+        .collect::<std::collections::HashSet<_>>();
+    for todo in todos.iter().chain(archived_todos.iter()) {
+        for relation in &todo.outgoing_relations {
+            if !todo_ids.contains(relation.target_task_id.as_str()) {
+                return Err(AppError::custom(format!(
+                    "任务 {} 引用了不存在的目标任务 {}",
+                    todo.id, relation.target_task_id
                 )));
             }
         }
@@ -757,6 +788,11 @@ mod tests {
             subtasks: vec![],
             duration_days: 1,
             completed_day_keys: vec![],
+            archived_day_keys: vec![],
+            outgoing_relations: vec![],
+            history_date: None,
+            history_source_todo_id: None,
+            history_kind: None,
         };
         db::save_todo(&conn, &old_todo, false).unwrap();
 
@@ -804,6 +840,11 @@ mod tests {
             }],
             duration_days: 3,
             completed_day_keys: vec!["2026-03-16".into()],
+            archived_day_keys: vec![],
+            outgoing_relations: vec![],
+            history_date: None,
+            history_source_todo_id: None,
+            history_kind: None,
         };
 
         let tag = Tag {
@@ -965,6 +1006,29 @@ mod tests {
     }
 
     #[test]
+    fn import_rejects_missing_relation_target() {
+        let conn = test_conn();
+        let envelope = serde_json::json!({
+            "version": "2.0",
+            "todos": [
+                {
+                    "id": "task-1",
+                    "title": "Has relation",
+                    "targetDate": "2026-03-16",
+                    "outgoingRelations": [
+                        {
+                            "id": "rel-1",
+                            "targetTaskId": "missing-task",
+                            "relationType": "dependsOn"
+                        }
+                    ]
+                }
+            ]
+        });
+        assert!(import_json_to_db(&conn, &envelope).is_err());
+    }
+
+    #[test]
     fn import_validation_failure_keeps_old_data() {
         let conn = test_conn();
         db::save_todo(
@@ -983,6 +1047,11 @@ mod tests {
                 subtasks: vec![],
                 duration_days: 1,
                 completed_day_keys: vec![],
+                archived_day_keys: vec![],
+                outgoing_relations: vec![],
+                history_date: None,
+                history_source_todo_id: None,
+                history_kind: None,
             },
             false,
         )

@@ -1,5 +1,6 @@
 import * as backend from "./backend";
 import type { BackendSettings } from "./backend";
+import { withTodoDefaults } from "./todo-helpers";
 import type { Todo, Tag, TagGroup, Theme, Locale } from "@/types";
 
 const LS_TODO_KEY = "tinydo-todos";
@@ -8,8 +9,8 @@ const LS_TAGS_KEY = "tinydo-tags";
 
 interface LegacyTodoStore {
   state: {
-    todos: Todo[];
-    archivedTodos: Todo[];
+    todos?: Todo[];
+    archivedTodos?: Todo[];
   };
   version: number;
 }
@@ -65,7 +66,13 @@ export async function initBackendData(): Promise<{
     backend.getAllSettings(),
   ]);
 
-  return { todos, archivedTodos, tags, tagGroups, settings };
+  return {
+    todos: todos.map(withTodoDefaults),
+    archivedTodos: archivedTodos.map(withTodoDefaults),
+    tags,
+    tagGroups,
+    settings,
+  };
 }
 
 function asString(v: unknown, fallback: string): string {
@@ -94,8 +101,8 @@ async function tryMigrateFromLocalStorage(): Promise<{
   const tagRaw = readLocalStorageJson(LS_TAGS_KEY);
   const tagData = tagRaw as LegacyTagStore | null;
 
-  const todos: Todo[] = todoData.state.todos;
-  const archivedTodos: Todo[] = todoData.state.archivedTodos;
+  const todos: Todo[] = (todoData.state.todos ?? []).map(withTodoDefaults);
+  const archivedTodos: Todo[] = (todoData.state.archivedTodos ?? []).map(withTodoDefaults);
   const tags: Tag[] = tagData?.state ? tagData.state.tags : [];
   const tagGroups: TagGroup[] = tagData?.state ? tagData.state.tagGroups : [];
 

@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   DndContext,
   DragOverlay,
@@ -12,7 +13,8 @@ import {
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { AlertTriangle, ListChecks } from "lucide-react";
 import { t } from "@/i18n";
-import { getOverdueDays, getTodayDateKey, shiftDateKey } from "@/lib/utils";
+import { isTodoCompletedForDate, isTodoVisibleOnBoard } from "@/lib/todo-helpers";
+import { getOverdueDays, getTodayDateKey } from "@/lib/utils";
 import { useTodoStore } from "@/stores/todoStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SortableTodoItem, TodoItem } from "./TodoItem";
@@ -30,40 +32,29 @@ export function TodoList({ board, boardDate }: Props) {
   const reorderTodos = useTodoStore((s) => s.reorderTodos);
   const locale = useSettingsStore((s) => s.locale);
   const todayK = getTodayDateKey();
+  const effectiveBoardDate = board === "today" ? todayK : boardDate;
 
   const filtered = useMemo(() => {
-    let list = todos.filter((td) => {
-      const dur = td.durationDays;
-      const endDate = shiftDateKey(td.targetDate, dur - 1);
-      if (board === "today") {
-        return td.targetDate <= todayK;
-      }
-      return td.targetDate <= boardDate && endDate >= boardDate;
-    });
-    if (viewMode === "active") list = list.filter((td) => !td.completed);
-    else if (viewMode === "completed") list = list.filter((td) => td.completed);
+    let list = todos.filter((todo) => isTodoVisibleOnBoard(todo, board, boardDate, todayK));
+    if (viewMode === "active")
+      list = list.filter((todo) => !isTodoCompletedForDate(todo, effectiveBoardDate));
+    else if (viewMode === "completed")
+      list = list.filter((todo) => isTodoCompletedForDate(todo, effectiveBoardDate));
     if (filterTagIds.length > 0)
       list = list.filter((td) => filterTagIds.some((fid) => td.tagIds.includes(fid)));
     return list;
-  }, [board, boardDate, filterTagIds, todayK, todos, viewMode]);
-
-  const effectiveBoardDate = board === "today" ? todayK : boardDate;
-
-  const isDayCompleted = useCallback(
-    (td: { completed: boolean; durationDays: number; completedDayKeys: string[] }) => {
-      if (td.durationDays > 1) {
-        return td.completedDayKeys.includes(effectiveBoardDate);
-      }
-      return td.completed;
-    },
-    [effectiveBoardDate],
-  );
+  }, [board, boardDate, effectiveBoardDate, filterTagIds, todayK, todos, viewMode]);
 
   const active = useMemo(
-    () => filtered.filter((td) => !isDayCompleted(td)).sort((a, b) => a.order - b.order),
-    [filtered, isDayCompleted],
+    () =>
+      filtered
+        .filter((todo) => !isTodoCompletedForDate(todo, effectiveBoardDate))
+        .sort((a, b) => a.order - b.order),
+    [effectiveBoardDate, filtered],
   );
-  const completed = filtered.filter((td) => isDayCompleted(td)).sort((a, b) => a.order - b.order);
+  const completed = filtered
+    .filter((todo) => isTodoCompletedForDate(todo, effectiveBoardDate))
+    .sort((a, b) => a.order - b.order);
   const odN = active.filter(
     (td) => getOverdueDays(td.targetDate, todayK, td.durationDays) > 0,
   ).length;
@@ -125,13 +116,16 @@ export function TodoList({ board, boardDate }: Props) {
           ))}
         </SortableContext>
 
-        <DragOverlay dropAnimation={null}>
-          {activeTodo ? (
-            <div className="cursor-grabbing border-b border-border/60 bg-surface-1 shadow-xl">
-              <TodoItem todo={activeTodo} boardDate={board === "today" ? todayK : boardDate} />
-            </div>
-          ) : null}
-        </DragOverlay>
+        {createPortal(
+          <DragOverlay dropAnimation={null}>
+            {activeTodo ? (
+              <div className="cursor-grabbing border-b border-border/60 bg-surface-1 shadow-xl">
+                <TodoItem todo={activeTodo} boardDate={board === "today" ? todayK : boardDate} />
+              </div>
+            ) : null}
+          </DragOverlay>,
+          document.body,
+        )}
       </DndContext>
 
       {completed.length > 0 && active.length > 0 && (

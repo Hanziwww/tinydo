@@ -331,6 +331,11 @@ mod tests {
             subtasks: vec![],
             duration_days: 1,
             completed_day_keys: vec![],
+            archived_day_keys: vec![],
+            outgoing_relations: vec![],
+            history_date: None,
+            history_source_todo_id: None,
+            history_kind: None,
         }
     }
 

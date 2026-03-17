@@ -25,6 +25,16 @@ export interface TimeSlot {
   end: string | null;
 }
 
+export type TaskRelationType = "dependsOn" | "blocks" | "relatedTo";
+
+export interface TaskRelation {
+  id: string;
+  targetTaskId: string;
+  relationType: TaskRelationType;
+}
+
+export type TodoHistoryKind = "completed" | "dailyProgress";
+
 export interface Todo {
   id: string;
   title: string;
@@ -39,6 +49,11 @@ export interface Todo {
   subtasks: SubTask[];
   durationDays: number;
   completedDayKeys: string[];
+  archivedDayKeys: string[];
+  outgoingRelations: TaskRelation[];
+  historyDate: string | null;
+  historySourceTodoId: string | null;
+  historyKind: TodoHistoryKind | null;
 }
 
 export type ViewMode = "all" | "active" | "completed";

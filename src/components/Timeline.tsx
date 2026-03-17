@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { t } from "@/i18n";
+import { isTodoArchivedForDate, isTodoCompletedForDate } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
@@ -66,7 +67,7 @@ export function Timeline({ board, boardDate }: Props) {
     const dur = td.durationDays;
     const endDate = shiftDateKey(td.targetDate, dur - 1);
     const inB = td.targetDate <= refDate && endDate >= refDate;
-    return inB && td.timeSlots.length > 0;
+    return inB && !isTodoArchivedForDate(td, refDate) && td.timeSlots.length > 0;
   });
 
   const color = (ids: string[]) => tags.find((tg) => ids.includes(tg.id))?.color ?? "#6366f1";
@@ -107,12 +108,14 @@ export function Timeline({ board, boardDate }: Props) {
       const dMin = (dx / barRef.current.clientWidth) * RANGE;
 
       if (drag.edge === "start") {
+        if (drag.origEnd === null) return;
         const newStart = snap(
-          Math.max(START, Math.min(drag.origEnd! - SNAP, drag.origStart + dMin)),
+          Math.max(START, Math.min(drag.origEnd - SNAP, drag.origStart + dMin)),
         );
         updateTimeSlot(drag.todoId, drag.slotId, { start: minutesToTime(newStart) });
       } else if (drag.edge === "end") {
-        const newEnd = snap(Math.max(drag.origStart + SNAP, Math.min(END, drag.origEnd! + dMin)));
+        if (drag.origEnd === null) return;
+        const newEnd = snap(Math.max(drag.origStart + SNAP, Math.min(END, drag.origEnd + dMin)));
         updateTimeSlot(drag.todoId, drag.slotId, { end: minutesToTime(newEnd) });
       } else {
         const newPoint = snap(Math.max(START, Math.min(END, drag.origStart + dMin)));
@@ -142,7 +145,7 @@ export function Timeline({ board, boardDate }: Props) {
     const c = color(td.tagIds);
     const s = timeToMinutes(slot.start);
     const isDragging = drag !== null && drag.todoId === td.id && drag.slotId === slot.id;
-    const isDayDone = td.durationDays > 1 ? td.completedDayKeys.includes(refDate) : td.completed;
+    const isDayDone = isTodoCompletedForDate(td, refDate);
 
     if (!slot.end) {
       return (
