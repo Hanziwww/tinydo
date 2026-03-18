@@ -15,6 +15,7 @@ interface TagState {
   deleteTag: (id: string) => void;
   addTagGroup: (name: string) => TagGroup;
   updateTagGroup: (id: string, updates: Partial<Omit<TagGroup, "id">>) => void;
+  moveTagGroup: (id: string, direction: -1 | 1) => void;
   deleteTagGroup: (id: string) => void;
 }
 
@@ -94,6 +95,21 @@ export const useTagStore = create<TagState>()((set, get) => ({
       }
       return { tagGroups };
     });
+  },
+
+  moveTagGroup: (id, direction) => {
+    const previous = { tagGroups: get().tagGroups };
+    const sorted = [...previous.tagGroups].sort((a, b) => a.order - b.order);
+    const index = sorted.findIndex((group) => group.id === id);
+    const swapIndex = index + direction;
+    if (index === -1 || swapIndex < 0 || swapIndex >= sorted.length) return;
+
+    [sorted[index], sorted[swapIndex]] = [sorted[swapIndex], sorted[index]];
+    const reordered = sorted.map((group, order) => ({ ...group, order }));
+    set({ tagGroups: reordered });
+    void Promise.all(reordered.map((group) => backend.saveTagGroup(group))).catch(
+      (error: unknown) => rollbackTagState(previous, error),
+    );
   },
 
   deleteTagGroup: (id) => {

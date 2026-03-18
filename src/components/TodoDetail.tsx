@@ -18,9 +18,17 @@ import { withTodoDefaults } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
-import { cn, DIFFICULTY_CONFIG, getOverdueDays, getTodayDateKey } from "@/lib/utils";
+import {
+  cn,
+  DIFFICULTY_CONFIG,
+  getOverdueDays,
+  getTodayDateKey,
+  getTomorrowDateKey,
+} from "@/lib/utils";
 import { TagBadge } from "./TagBadge";
 import type { Difficulty, Locale, SubTask, TaskRelationType, TimeSlot, Todo } from "@/types";
+
+const REMINDER_PRESETS = [null, 0, 5, 15, 30, 60, 120, 720] as const;
 
 export function TodoDetail() {
   const locale = useSettingsStore((s) => s.locale);
@@ -44,6 +52,13 @@ export function TodoDetail() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [subtaskInput, setSubtaskInput] = useState("");
+  const [customReminderDraft, setCustomReminderDraft] = useState<{
+    todoId: string | null;
+    value: string;
+  }>({
+    todoId: null,
+    value: "",
+  });
   const ref = useRef<HTMLDivElement>(null);
 
   const todo = useMemo(() => {
@@ -69,6 +84,48 @@ export function TodoDetail() {
   const avail = tags.filter(
     (tg) => !todo.tagIds.includes(tg.id) && tg.name.toLowerCase().includes(search.toLowerCase()),
   );
+  const customReminder =
+    customReminderDraft.todoId === todo.id
+      ? customReminderDraft.value
+      : todo.reminderMinsBefore == null
+        ? ""
+        : String(todo.reminderMinsBefore);
+  const todayKey = getTodayDateKey();
+  const tomorrowKey = getTomorrowDateKey();
+
+  const applyTargetDate = (nextDate: string) => {
+    if (!nextDate || nextDate === todo.targetDate) return;
+    update(todo.id, {
+      targetDate: nextDate,
+      ...(todo.durationDays > 1 ||
+      todo.completedDayKeys.length > 0 ||
+      todo.archivedDayKeys.length > 0
+        ? {
+            completed: false,
+            completedDayKeys: [],
+            archivedDayKeys: [],
+          }
+        : {}),
+    });
+  };
+
+  const applyCustomReminder = () => {
+    if (!slots.length) return;
+    const parsed = Number(customReminder);
+    if (!Number.isFinite(parsed)) return;
+    const clamped = Math.max(0, Math.min(720, Math.round(parsed)));
+    update(todo.id, { reminderMinsBefore: clamped });
+    setCustomReminderDraft({ todoId: todo.id, value: String(clamped) });
+  };
+
+  const formatReminderLabel = (mins: (typeof REMINDER_PRESETS)[number]) => {
+    if (mins == null) return t("detail.reminder_off", locale);
+    if (mins === 0) return t("detail.reminder_at_time", locale);
+    if (mins >= 60 && mins % 60 === 0) {
+      return t("detail.reminder_hours", locale, { n: mins / 60 });
+    }
+    return t("detail.reminder_mins", locale, { n: mins });
+  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface-1">
@@ -135,6 +192,43 @@ export function TodoDetail() {
 
         <div>
           <label className="mb-1.5 block text-[15px] font-medium text-text-2">
+            {t("detail.date", locale)}
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => applyTargetDate(todayKey)}
+              className={cn(
+                "border px-3 py-2 text-[14px] font-medium transition-all",
+                todo.targetDate === todayKey
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border bg-surface-2 text-text-2 hover:bg-surface-3",
+              )}
+            >
+              {t("detail.move_today", locale)}
+            </button>
+            <button
+              type="button"
+              onClick={() => applyTargetDate(tomorrowKey)}
+              className={cn(
+                "border px-3 py-2 text-[14px] font-medium transition-all",
+                todo.targetDate === tomorrowKey
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border bg-surface-2 text-text-2 hover:bg-surface-3",
+              )}
+            >
+              {t("detail.move_tomorrow", locale)}
+            </button>
+          </div>
+          {(todo.durationDays > 1 ||
+            todo.completedDayKeys.length > 0 ||
+            todo.archivedDayKeys.length > 0) && (
+            <p className="mt-2 text-[13px] text-text-3">{t("detail.date_reset_hint", locale)}</p>
+          )}
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-[15px] font-medium text-text-2">
             {t("detail.time_mode", locale)}
           </label>
           <div className="space-y-2">
@@ -165,11 +259,17 @@ export function TodoDetail() {
               {t("detail.reminder", locale)}
             </label>
             <div className="grid grid-cols-4 gap-1">
-              {([null, 5, 10, 15] as const).map((mins) => (
+              {REMINDER_PRESETS.map((mins) => (
                 <button
                   key={String(mins)}
                   type="button"
-                  onClick={() => update(todo.id, { reminderMinsBefore: mins })}
+                  onClick={() => {
+                    setCustomReminderDraft({
+                      todoId: todo.id,
+                      value: mins == null ? "" : String(mins),
+                    });
+                    update(todo.id, { reminderMinsBefore: mins });
+                  }}
                   className={cn(
                     "border py-2 text-[14px] font-medium transition-all",
                     todo.reminderMinsBefore === mins
@@ -177,11 +277,36 @@ export function TodoDetail() {
                       : "border-border bg-surface-2 text-text-2 hover:bg-surface-3",
                   )}
                 >
-                  {mins == null
-                    ? t("detail.reminder_off", locale)
-                    : t("detail.reminder_mins", locale, { n: mins })}
+                  {formatReminderLabel(mins)}
                 </button>
               ))}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={720}
+                value={customReminder}
+                onChange={(e) => setCustomReminderDraft({ todoId: todo.id, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyCustomReminder();
+                  }
+                }}
+                placeholder={t("detail.reminder_custom", locale)}
+                className="w-28 border border-border bg-surface-2 px-3 py-2 text-[14px] text-text-1 outline-none"
+              />
+              <span className="text-[13px] text-text-3">
+                {t("detail.reminder_custom_unit", locale)}
+              </span>
+              <button
+                type="button"
+                onClick={applyCustomReminder}
+                className="border border-border bg-surface-2 px-3 py-2 text-[13px] font-medium text-text-2 transition-colors hover:bg-surface-3"
+              >
+                {t("detail.reminder_apply", locale)}
+              </button>
             </div>
           </div>
         )}

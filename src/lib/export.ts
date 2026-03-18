@@ -18,32 +18,32 @@ async function reloadImportedState() {
   useSettingsStore.getState()._hydrate(settingsToStore(settings));
 }
 
-export async function exportAllData() {
+export async function exportAllData(): Promise<string | null> {
   const filePath = await save({
     defaultPath: `tinydo-export-${new Date().toISOString().slice(0, 10)}.json`,
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
 
-  if (!filePath) return;
+  if (!filePath) return null;
 
   await backend.exportData(filePath);
+  return filePath;
 }
 
-export async function importAllData(): Promise<number> {
+export async function importAllData(): Promise<backend.ImportResult | null> {
   const filePath = await open({
     filters: [{ name: "JSON", extensions: ["json"] }],
     multiple: false,
   });
 
-  if (!filePath) return 0;
+  if (!filePath) return null;
 
   const result = await backend.importData(filePath);
-  const total = result.todosCount + result.archivedCount;
   try {
     await reloadImportedState();
   } catch {
     await reloadImportedState();
   }
 
-  return total;
+  return result;
 }

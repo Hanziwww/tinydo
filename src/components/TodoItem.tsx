@@ -56,6 +56,11 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const update = useTodoStore((s) => s.updateTodo);
   const remove = useTodoStore((s) => s.deleteTodo);
   const setEdit = useTodoStore((s) => s.setEditingTodoId);
+  const selectionMode = useTodoStore((s) => s.selectionMode);
+  const selectedTodoIds = useTodoStore((s) => s.selectedTodoIds);
+  const toggleTodoSelection = useTodoStore((s) => s.toggleTodoSelection);
+  const highlightedTodoId = useTodoStore((s) => s.highlightedTodoId);
+  const setHighlightedTodoId = useTodoStore((s) => s.setHighlightedTodoId);
   const todos = useTodoStore((s) => s.todos);
   const addSubtask = useTodoStore((s) => s.addSubtask);
   const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
@@ -68,6 +73,8 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const [dragSubId, setDragSubId] = useState<string | null>(null);
   const refDate = boardDate ?? todayK;
   const [isNew] = useState(() => Date.now() - todo.createdAt < ENTER_THRESHOLD_MS);
+  const isSelected = selectedTodoIds.includes(todo.id);
+  const isHighlighted = highlightedTodoId === todo.id;
 
   const subtasks = useMemo(
     () => [...todo.subtasks].sort((a, b) => a.order - b.order),
@@ -114,6 +121,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (selectionMode) return;
     if (deleting) return;
     setDeleting(true);
     deleteTimerRef.current = setTimeout(() => remove(todo.id), 350);
@@ -123,6 +131,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (selectionMode) return;
     if (anim) return;
     const currentDone = isTodoCompletedForDate(todo, refDate);
     const dir = currentDone ? "uncompleting" : "completing";
@@ -145,6 +154,10 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
 
   function rowClick(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest("button, input")) return;
+    if (selectionMode) {
+      toggleTodoSelection(todo.id);
+      return;
+    }
     if (showSubtasks && (e.target as HTMLElement).closest("[data-subtask-badge]")) {
       setExpanded((x) => !x);
       return;
@@ -172,8 +185,12 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
         if (e.key === "Enter") rowClick(e as unknown as React.MouseEvent);
       }}
       className={cn(
-        "group relative grid grid-cols-[18px_minmax(0,1fr)_18px] items-start gap-x-3 border-b border-border/60 py-2.5 pl-10 pr-5",
+        "group relative grid grid-cols-[18px_minmax(0,1fr)_18px] items-start gap-x-3 border-b border-border/60 py-2.5 pl-10 pr-5 transition-all duration-300",
         od > 0 ? "bg-warning/[0.04]" : "hover:bg-surface-2/40",
+        selectionMode && isSelected && "bg-accent/5 ring-1 ring-accent/40",
+        isHighlighted &&
+          !selectionMode &&
+          "ring-2 ring-accent/60 shadow-[0_0_12px_rgba(99,102,241,0.35)]",
         isDayDone && !anim && "opacity-50",
         anim === "completing" && "animate-row-complete",
         anim === "uncompleting" && "animate-row-uncomplete",
@@ -183,10 +200,29 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     >
       {od > 0 && <span className="absolute inset-y-2 left-0 w-[3px] bg-warning" />}
 
+      {selectionMode && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleTodoSelection(todo.id);
+          }}
+          className={cn(
+            "absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center border-2 transition-colors",
+            isSelected
+              ? "border-accent bg-accent text-white"
+              : "border-text-3/40 bg-surface-1 text-transparent",
+          )}
+        >
+          {isSelected && <Check size={10} strokeWidth={3} />}
+        </button>
+      )}
+
       <div
         {...(dragListeners ?? {})}
         onClick={(e) => e.stopPropagation()}
         className="absolute left-1.5 top-1/2 -translate-y-1/2 cursor-grab text-text-3 opacity-0 transition-opacity group-hover:opacity-40"
+        style={{ display: selectionMode ? "none" : undefined }}
       >
         <GripVertical size={14} />
       </div>
@@ -248,6 +284,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
               )}
               onDoubleClick={(e) => {
                 e.stopPropagation();
+                if (selectionMode) return;
                 setEditing(true);
               }}
             >
@@ -293,6 +330,8 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
                 e.stopPropagation();
                 setEdit(primaryRelation.targetTaskId);
               }}
+              onMouseEnter={() => setHighlightedTodoId(primaryRelation.targetTaskId)}
+              onMouseLeave={() => setHighlightedTodoId(null)}
               title={`${t(`relation.${primaryRelation.relationType}`, locale)} ${primaryRelation.targetTitle}`}
               className="min-w-0 max-w-[220px] truncate text-left leading-5 transition-colors hover:text-accent"
             >
@@ -374,13 +413,15 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={handleDelete}
-        className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
-      >
-        <Trash2 size={15} />
-      </button>
+      {!selectionMode && (
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
+        >
+          <Trash2 size={15} />
+        </button>
+      )}
     </div>
   );
 }

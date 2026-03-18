@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { t } from "@/i18n";
 import { isTodoArchivedForDate, isTodoCompletedForDate } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -18,12 +18,13 @@ import type { PlanningBoard, TimeSlot } from "@/types";
 interface Props {
   board: PlanningBoard;
   boardDate: string;
+  searchQuery: string;
 }
 
 const SNAP = 5;
 const snap = (m: number) => Math.round(m / SNAP) * SNAP;
 
-export function Timeline({ board, boardDate }: Props) {
+export function Timeline({ board, boardDate, searchQuery }: Props) {
   const locale = useSettingsStore((s) => s.locale);
   const startHour = useSettingsStore((s) => s.timelineStartHour);
   const endHour = useSettingsStore((s) => s.timelineEndHour);
@@ -33,6 +34,7 @@ export function Timeline({ board, boardDate }: Props) {
     return d.getHours() * 60 + d.getMinutes();
   });
   const todos = useTodoStore((s) => s.todos);
+  const addTimelineTodo = useTodoStore((s) => s.addTimelineTodo);
   const updateTimeSlot = useTodoStore((s) => s.updateTimeSlot);
   const setEditingId = useTodoStore((s) => s.setEditingTodoId);
   const tags = useTagStore((s) => s.tags);
@@ -41,6 +43,12 @@ export function Timeline({ board, boardDate }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [hoverQuickAdd, setHoverQuickAdd] = useState<{
+    left: number;
+    start: string;
+    end: string | null;
+    label: string;
+  } | null>(null);
   const [drag, setDrag] = useState<{
     todoId: string;
     slotId: string;
@@ -49,6 +57,7 @@ export function Timeline({ board, boardDate }: Props) {
     origEnd: number | null;
     startX: number;
   } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -58,16 +67,32 @@ export function Timeline({ board, boardDate }: Props) {
     return () => clearInterval(id);
   }, []);
 
+  const clearHoverQuickAdd = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setHoverQuickAdd(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    };
+  }, []);
+
   const START = startHour * 60;
   const END = endHour * 60;
   const RANGE = END - START;
 
   const refDate = board === "today" ? todayK : boardDate;
   const items = todos.filter((td) => {
+    const query = searchQuery.trim().toLowerCase();
     const dur = td.durationDays;
     const endDate = shiftDateKey(td.targetDate, dur - 1);
     const inB = td.targetDate <= refDate && endDate >= refDate;
-    return inB && !isTodoArchivedForDate(td, refDate) && td.timeSlots.length > 0;
+    const matchesQuery = query.length === 0 || td.title.toLowerCase().includes(query);
+    return inB && !isTodoArchivedForDate(td, refDate) && td.timeSlots.length > 0 && matchesQuery;
   });
 
   const color = (ids: string[]) => tags.find((tg) => ids.includes(tg.id))?.color ?? "#6366f1";
@@ -83,6 +108,7 @@ export function Timeline({ board, boardDate }: Props) {
     (e: React.PointerEvent, todoId: string, slotId: string, edge: "start" | "end" | "point") => {
       e.stopPropagation();
       e.preventDefault();
+      clearHoverQuickAdd();
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       const td = todos.find((x) => x.id === todoId);
       if (!td) return;
@@ -98,7 +124,7 @@ export function Timeline({ board, boardDate }: Props) {
       });
       setTooltip(null);
     },
-    [todos],
+    [clearHoverQuickAdd, todos],
   );
 
   const onPointerMove = useCallback(
@@ -141,6 +167,53 @@ export function Timeline({ board, boardDate }: Props) {
     });
   };
 
+  const buildHoverQuickAdd = useCallback(
+    (clientX: number) => {
+      if (!barRef.current) return null;
+      const rect = barRef.current.getBoundingClientRect();
+      const barWidth = rect.width;
+      const ratio = (clientX - rect.left) / Math.max(barWidth, 1);
+      const startMin = snap(Math.max(START, Math.min(END - SNAP, START + ratio * RANGE)));
+      const endMin = Math.min(END, startMin + 60);
+      const start = minutesToTime(startMin);
+      const end = endMin - startMin >= SNAP ? minutesToTime(endMin) : null;
+      const rawLeft = clientX - rect.left;
+      return {
+        left: Math.max(70, Math.min(rawLeft, barWidth - 70)),
+        start,
+        end,
+        label: end ? `${start}-${end}` : start,
+      };
+    },
+    [END, RANGE, START],
+  );
+
+  const scheduleHoverQuickAdd = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (drag) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-slot-item='true']")) {
+      clearHoverQuickAdd();
+      return;
+    }
+    if (target.closest("[data-hover-create='true']")) return;
+
+    const candidate = buildHoverQuickAdd(e.clientX);
+    if (!candidate) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    setHoverQuickAdd(null);
+    hoverTimerRef.current = setTimeout(() => {
+      setTooltip(null);
+      setHoverQuickAdd(candidate);
+      hoverTimerRef.current = null;
+    }, 500);
+  };
+
+  const createHoveredTask = () => {
+    if (!hoverQuickAdd) return;
+    addTimelineTodo(refDate, hoverQuickAdd.start, hoverQuickAdd.end);
+    clearHoverQuickAdd();
+  };
+
   const renderSlot = (td: (typeof items)[0], slot: TimeSlot) => {
     const c = color(td.tagIds);
     const s = timeToMinutes(slot.start);
@@ -151,6 +224,7 @@ export function Timeline({ board, boardDate }: Props) {
       return (
         <div
           key={`${td.id}-${slot.id}`}
+          data-slot-item="true"
           className={cn(
             "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 transition-transform duration-100",
             isDayDone && "opacity-25",
@@ -164,6 +238,7 @@ export function Timeline({ board, boardDate }: Props) {
             ev.stopPropagation();
             if (!drag) setEditingId(td.id);
           }}
+          onDoubleClick={(ev) => ev.stopPropagation()}
           onPointerDown={(ev) => onPointerDown(ev, td.id, slot.id, "point")}
         />
       );
@@ -176,6 +251,7 @@ export function Timeline({ board, boardDate }: Props) {
     return (
       <div
         key={`${td.id}-${slot.id}`}
+        data-slot-item="true"
         className={cn(
           "absolute top-1.5 bottom-1.5 transition-opacity duration-100",
           isDayDone && "opacity-25",
@@ -193,6 +269,7 @@ export function Timeline({ board, boardDate }: Props) {
           ev.stopPropagation();
           if (!drag) setEditingId(td.id);
         }}
+        onDoubleClick={(ev) => ev.stopPropagation()}
       >
         <div
           className="absolute inset-y-0 left-0 w-2 cursor-ew-resize"
@@ -259,9 +336,11 @@ export function Timeline({ board, boardDate }: Props) {
           <div
             ref={barRef}
             className="relative h-9 overflow-visible bg-surface-2"
+            onMouseMove={scheduleHoverQuickAdd}
             onPointerMove={drag ? onPointerMove : undefined}
             onPointerUp={drag ? onPointerUp : undefined}
             onPointerLeave={() => {
+              clearHoverQuickAdd();
               if (!drag) setTooltip(null);
             }}
           >
@@ -280,6 +359,19 @@ export function Timeline({ board, boardDate }: Props) {
                 className="absolute top-0 h-full w-0.5 bg-danger"
                 style={{ left: `${nowPct}%` }}
               />
+            )}
+
+            {hoverQuickAdd && !drag && (
+              <button
+                type="button"
+                data-hover-create="true"
+                onClick={createHoveredTask}
+                className="absolute top-1/2 z-20 flex h-7 -translate-x-1/2 -translate-y-1/2 items-center gap-1 whitespace-nowrap overflow-hidden max-w-[160px] border border-accent/40 bg-surface-1/95 px-2 text-[11px] font-medium text-accent shadow-lg backdrop-blur"
+                style={{ left: `${hoverQuickAdd.left}px` }}
+              >
+                <Plus size={11} className="shrink-0" />
+                <span className="truncate">{hoverQuickAdd.label}</span>
+              </button>
             )}
           </div>
         </div>

@@ -419,16 +419,7 @@ pub struct ExportEnvelope {
     pub archived_todos: Vec<Todo>,
     pub tags: Vec<Tag>,
     pub tag_groups: Vec<TagGroup>,
-    pub settings: ExportSettings,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportSettings {
-    pub theme: String,
-    pub locale: String,
-    pub show_timeline: bool,
-    pub tomorrow_planning_unlock_hour: u32,
+    pub settings: Settings,
 }
 
 #[cfg(test)]

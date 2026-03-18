@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertTriangle, Calendar, Hash, Settings2 } from "lucide-react";
+import { AlertTriangle, Calendar, Hash, Search, Settings2, X } from "lucide-react";
 import {
   cn,
   formatDate,
@@ -48,7 +48,12 @@ function App() {
   const [initError, setInitError] = useState<string | null>(null);
   const [modeTransitioning, setModeTransitioning] = useState(false);
   const [splashDone, setSplashDone] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [focusSignal, setFocusSignal] = useState(0);
+  const [searchFocusSignal, setSearchFocusSignal] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const hydrated = useTodoStore((s) => s._hydrated);
   const theme = useSettingsStore((s) => s.theme);
@@ -80,6 +85,7 @@ function App() {
       el.classList.remove("animate-window-appear");
       void el.offsetWidth;
       el.classList.add("animate-window-appear");
+      setFocusSignal((value) => value + 1);
     });
     return () => {
       void unlisten.then((f) => f());
@@ -117,12 +123,54 @@ function App() {
         ? t("app.greeting", locale, { name: userName || "TinyDo" })
         : t("app.greeting_tomorrow", locale);
 
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+  }, []);
+
+  const openSearch = useCallback(() => {
+    if (board === "history") return;
+    setSearchOpen(true);
+    setSearchFocusSignal((value) => value + 1);
+  }, [board]);
+
   useEffect(() => {
     if (!unlocked && board === "tomorrow") {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- sync board when tomorrow locks
       setBoard("today");
     }
   }, [board, unlocked]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const id = requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [searchOpen, searchFocusSignal]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        if (board === "history") return;
+        event.preventDefault();
+        if (searchOpen) closeSearch();
+        else openSearch();
+        return;
+      }
+
+      if (
+        event.key === "Escape" &&
+        searchOpen &&
+        document.activeElement === searchInputRef.current
+      ) {
+        event.preventDefault();
+        closeSearch();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [board, closeSearch, openSearch, searchOpen]);
+
   const splitOverdueSubtasks = useTodoStore((s) => s.splitOverdueSubtasks);
   const prevTodayRef = useRef(todayK);
   useEffect(() => {
@@ -245,7 +293,7 @@ function App() {
             >
               {mini ? (
                 <div className="mini-mode flex h-full flex-col text-text-1">
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-1">
+                  <div className="mini-mode-inner flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-1">
                     <MiniMode onExpand={exitMini} />
                   </div>
                 </div>
@@ -275,6 +323,24 @@ function App() {
                                 time: formatHourLabel(unlockHour, locale),
                               })}
                             </span>
+                          )}
+                          {board !== "history" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (searchOpen) closeSearch();
+                                else openSearch();
+                              }}
+                              className={cn(
+                                "p-1.5 transition-colors",
+                                searchOpen
+                                  ? "bg-accent-soft text-accent"
+                                  : "text-text-3 hover:bg-surface-2 hover:text-text-1",
+                              )}
+                              title="Ctrl+F"
+                            >
+                              <Search size={17} />
+                            </button>
                           )}
                           <button
                             type="button"
@@ -332,7 +398,10 @@ function App() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setBoard("history")}
+                          onClick={() => {
+                            closeSearch();
+                            setBoard("history");
+                          }}
                           className={cn(
                             "flex items-center gap-1.5 border-b-2 pb-1 text-[15px] font-semibold transition-all duration-200",
                             board === "history"
@@ -352,9 +421,50 @@ function App() {
                               board={board}
                               targetDate={bDate}
                               disabled={board === "tomorrow" && !unlocked}
+                              focusSignal={focusSignal}
                             />
                           </div>
                           <TagFilter />
+                          <AnimatePresence>
+                            {searchOpen && (
+                              <motion.div
+                                key="search-bar"
+                                initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                                animate={{ opacity: 1, height: "auto", marginTop: 10 }}
+                                exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                                transition={{ duration: 0.2, ease: EASE_OUT_EXPO }}
+                                className="overflow-hidden"
+                              >
+                                <div className="flex items-center gap-3 border border-border bg-surface-2/60 px-3 py-2">
+                                  <Search size={15} className="shrink-0 text-text-3" />
+                                  <input
+                                    ref={searchInputRef}
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder={t("search.placeholder", locale)}
+                                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text-1 outline-none placeholder:text-text-3"
+                                  />
+                                  {searchQuery.trim() && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSearchQuery("")}
+                                      className="shrink-0 text-[13px] text-text-3 transition-colors hover:text-text-1"
+                                    >
+                                      {t("search.clear", locale)}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={closeSearch}
+                                    className="shrink-0 p-1 text-text-3 transition-colors hover:text-text-1"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </>
                       )}
                     </header>
@@ -374,14 +484,18 @@ function App() {
                               transitionKey={`${board}-${viewMode}`}
                               className="min-h-0 flex-1 overflow-y-auto"
                             >
-                              <TodoList board={board} boardDate={bDate} />
+                              <TodoList board={board} boardDate={bDate} searchQuery={searchQuery} />
                             </FadeTransition>
                             {showTimeline && (
                               <div className="shrink-0 border-t border-border px-6 py-3">
-                                <Timeline board={board} boardDate={bDate} />
+                                <Timeline
+                                  board={board}
+                                  boardDate={bDate}
+                                  searchQuery={searchQuery}
+                                />
                               </div>
                             )}
-                            <StatusBar board={board} boardDate={bDate} />
+                            <StatusBar board={board} boardDate={bDate} searchQuery={searchQuery} />
                           </>
                         )}
                       </main>

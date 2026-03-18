@@ -23,9 +23,10 @@ import type { PlanningBoard } from "@/types";
 interface Props {
   board: PlanningBoard;
   boardDate: string;
+  searchQuery: string;
 }
 
-export function TodoList({ board, boardDate }: Props) {
+export function TodoList({ board, boardDate, searchQuery }: Props) {
   const todos = useTodoStore((s) => s.todos);
   const viewMode = useTodoStore((s) => s.viewMode);
   const filterTagIds = useTodoStore((s) => s.filterTagIds);
@@ -35,6 +36,7 @@ export function TodoList({ board, boardDate }: Props) {
   const effectiveBoardDate = board === "today" ? todayK : boardDate;
 
   const filtered = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
     let list = todos.filter((todo) => isTodoVisibleOnBoard(todo, board, boardDate, todayK));
     if (viewMode === "active")
       list = list.filter((todo) => !isTodoCompletedForDate(todo, effectiveBoardDate));
@@ -42,8 +44,9 @@ export function TodoList({ board, boardDate }: Props) {
       list = list.filter((todo) => isTodoCompletedForDate(todo, effectiveBoardDate));
     if (filterTagIds.length > 0)
       list = list.filter((td) => filterTagIds.some((fid) => td.tagIds.includes(fid)));
+    if (query) list = list.filter((todo) => todo.title.toLowerCase().includes(query));
     return list;
-  }, [board, boardDate, effectiveBoardDate, filterTagIds, todayK, todos, viewMode]);
+  }, [board, boardDate, effectiveBoardDate, filterTagIds, searchQuery, todayK, todos, viewMode]);
 
   const active = useMemo(
     () =>
@@ -64,6 +67,8 @@ export function TodoList({ board, boardDate }: Props) {
     () => (activeId ? active.find((td) => td.id === activeId) : null),
     [activeId, active],
   );
+  const isFirstRun =
+    todos.length === 0 && filterTagIds.length === 0 && searchQuery.trim().length === 0;
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   function onDragStart(ev: DragStartEvent) {
@@ -81,11 +86,37 @@ export function TodoList({ board, boardDate }: Props) {
   }
 
   if (filtered.length === 0) {
+    if (isFirstRun) {
+      return (
+        <div className="mx-auto max-w-[540px] px-6 py-14">
+          <div className="border border-border bg-surface-2/40 p-6">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-accent">
+              TinyDo
+            </p>
+            <h2 className="mt-2 text-[22px] font-bold text-text-1">
+              {t("app.brand_hint", locale)}
+            </h2>
+            <p className="mt-2 text-[14px] leading-6 text-text-3">
+              {board === "today"
+                ? t("todo.empty.first_run_today", locale)
+                : t("todo.empty.first_run_tomorrow", locale)}
+            </p>
+            <div className="mt-5 space-y-2 text-[14px] text-text-2">
+              <p>{t("onboarding.capture", locale)}</p>
+              <p>{t("onboarding.timeline", locale)}</p>
+              <p>{t("onboarding.archive", locale)}</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center justify-center py-16 text-text-3">
         <ListChecks size={36} strokeWidth={1.2} className="mb-4 opacity-25" />
         <p className="text-[14px] font-medium text-text-2">{t("todo.empty", locale)}</p>
-        <p className="mt-1.5 text-[13px] text-text-3">{t("todo.empty.hint", locale)}</p>
+        <p className="mt-1.5 text-[13px] text-text-3">
+          {searchQuery.trim() ? t("search.empty", locale) : t("todo.empty.hint", locale)}
+        </p>
       </div>
     );
   }

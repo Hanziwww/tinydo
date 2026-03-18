@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { Check } from "lucide-react";
 import { DIFFICULTY_CONFIG, formatTimeSlots, hexToRgba } from "@/lib/utils";
+import { isTodoCompletedForDate } from "@/lib/todo-helpers";
 import { t } from "@/i18n";
 import type { Todo, Locale } from "@/types";
 
@@ -13,6 +14,7 @@ interface Tag {
 interface Props {
   title: string;
   dateLabel: string;
+  boardDate: string;
   todos: Todo[];
   allTodos: Todo[];
   tags: Tag[];
@@ -51,10 +53,10 @@ function LogoSvg({ dark }: { dark: boolean }) {
 }
 
 export const PosterPreview = forwardRef<HTMLDivElement, Props>(
-  ({ title, dateLabel, todos, allTodos, tags, locale, theme }, ref) => {
+  ({ title, dateLabel, boardDate, todos, allTodos, tags, locale, theme }, ref) => {
     const sorted = [...todos].sort((a, b) => a.order - b.order);
-    const active = sorted.filter((td) => !td.completed);
-    const completed = sorted.filter((td) => td.completed);
+    const active = sorted.filter((td) => !isTodoCompletedForDate(td, boardDate));
+    const completed = sorted.filter((td) => isTodoCompletedForDate(td, boardDate));
     const todoTitleMap = new Map(allTodos.map((todo) => [todo.id, todo.title]));
 
     const isDark = theme === "dark";

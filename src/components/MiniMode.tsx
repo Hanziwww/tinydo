@@ -8,6 +8,7 @@ import {
   getOverdueDays,
   getTodayDateKey,
   DIFFICULTY_CONFIG,
+  hexToRgba,
 } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
@@ -17,7 +18,7 @@ interface Props {
 }
 
 export function MiniMode({ onExpand }: Props) {
-  const win = getCurrentWindow();
+  const win = useMemo(() => getCurrentWindow(), []);
   const locale = useSettingsStore((s) => s.locale);
   const theme = useSettingsStore((s) => s.theme);
   const enableSubtasks = useSettingsStore((s) => s.enableSubtasks);
@@ -55,15 +56,38 @@ export function MiniMode({ onExpand }: Props) {
   const overdueN = overdueTodos.length;
 
   useEffect(() => {
-    const onFocus = () => setFocused(true);
-    const onBlur = () => setFocused(false);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("blur", onBlur);
+    let active = true;
+    let unlisten: (() => void) | undefined;
+
+    void win
+      .isFocused()
+      .then((isFocused) => {
+        if (active) setFocused(isFocused);
+      })
+      .catch(() => {
+        if (active) setFocused(true);
+      });
+
+    void win
+      .onFocusChanged(({ payload }) => {
+        if (active) setFocused(payload);
+      })
+      .then((dispose) => {
+        if (active) {
+          unlisten = dispose;
+        } else {
+          dispose();
+        }
+      })
+      .catch(() => {
+        /* keep the default focused state if focus subscription fails */
+      });
+
     return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("blur", onBlur);
+      active = false;
+      unlisten?.();
     };
-  }, []);
+  }, [win]);
 
   const isTransparent = fadeOnBlur && !focused;
   useEffect(() => {
@@ -81,7 +105,9 @@ export function MiniMode({ onExpand }: Props) {
     await win.setAlwaysOnTop(next);
   };
 
-  const containerOpacity = fadeOnBlur && !focused ? fadeOpacity : 1;
+  const panelOpacity = fadeOnBlur && !focused ? fadeOpacity : 1;
+  const contentOpacity = fadeOnBlur && !focused ? 0.5 + fadeOpacity * 0.5 : 1;
+  const panelBackground = hexToRgba(theme === "dark" ? "#161b26" : "#ffffff", panelOpacity);
 
   const renderTask = (td: (typeof activeTodos)[0], isOverdue: boolean, todayIndex?: number) => {
     const diff = DIFFICULTY_CONFIG[td.difficulty];
@@ -213,89 +239,99 @@ export function MiniMode({ onExpand }: Props) {
 
   return (
     <div
-      className="flex h-full select-none flex-col bg-surface-1 text-text-1"
-      style={{ opacity: containerOpacity, transition: "opacity 0.25s ease" }}
+      className="flex h-full select-none flex-col text-text-1"
+      style={{
+        backgroundColor: panelBackground,
+        transition: "background-color 0.25s ease",
+      }}
     >
       <div
-        className="flex h-10 shrink-0 items-center justify-between border-b border-border px-4"
-        onMouseDown={() => win.startDragging()}
+        className="flex h-full flex-col"
+        style={{ opacity: contentOpacity, transition: "opacity 0.25s ease" }}
       >
-        <div className="flex items-center gap-2">
-          <img
-            src={theme === "dark" ? "/icons/tinydo-logo-dark.svg" : "/icons/tinydo-logo-light.svg"}
-            alt="TinyDo"
-            className="h-5 w-5 shrink-0"
-          />
-          <span className="text-[15px] font-bold text-text-2">
-            {userName || "TinyDo"} · {activeTodos.length}
-            {overdueN > 0 && <span className="ml-1 text-warning">⚠{overdueN}</span>}
-          </span>
-        </div>
-        <div className="flex items-center" onMouseDown={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={togglePin}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center transition-colors",
-              alwaysOnTop ? "text-accent" : "text-text-3 hover:text-text-2",
-            )}
-            title={alwaysOnTop ? "取消置顶" : "置顶"}
-          >
-            {alwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
-          </button>
-          <button
-            type="button"
-            onClick={onExpand}
-            className="flex h-8 w-8 items-center justify-center text-text-3 transition-colors hover:text-text-1"
-            title={t("mini.expand", locale)}
-          >
-            <Maximize2 size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={() => win.close()}
-            className="flex h-8 w-8 items-center justify-center text-text-3 transition-colors hover:bg-danger hover:text-white"
-          >
-            <X size={15} />
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        {activeTodos.length === 0 ? (
-          <div className="flex items-center justify-center py-10 text-[16px] text-text-3">
-            {t("todo.empty", locale)} ✨
+        <div
+          className="flex h-10 shrink-0 items-center justify-between border-b border-border px-4"
+          onMouseDown={() => win.startDragging()}
+        >
+          <div className="flex items-center gap-2">
+            <img
+              src={
+                theme === "dark" ? "/icons/tinydo-logo-dark.svg" : "/icons/tinydo-logo-light.svg"
+              }
+              alt="TinyDo"
+              className="h-5 w-5 shrink-0"
+            />
+            <span className="text-[15px] font-bold text-text-2">
+              {userName || "TinyDo"} · {activeTodos.length}
+              {overdueN > 0 && <span className="ml-1 text-warning">⚠{overdueN}</span>}
+            </span>
           </div>
-        ) : (
-          <>
-            {overdueTodos.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
-                  <span className="h-px flex-1 bg-warning/30" />
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-warning">
-                    {t("mini.overdue", locale)}
-                  </span>
-                  <span className="h-px flex-1 bg-warning/30" />
-                </div>
-                {overdueTodos.map((td) => renderTask(td, true))}
-              </div>
-            )}
-            {todayTodos.length > 0 && (
-              <div>
-                {overdueTodos.length > 0 && (
-                  <div className="flex items-center gap-2 px-4 pt-2 pb-1">
-                    <span className="h-px flex-1 bg-border/50" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-text-3">
-                      {t("mini.today", locale)}
+          <div className="flex items-center" onMouseDown={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={togglePin}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center transition-colors",
+                alwaysOnTop ? "text-accent" : "text-text-3 hover:text-text-2",
+              )}
+              title={alwaysOnTop ? "取消置顶" : "置顶"}
+            >
+              {alwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />}
+            </button>
+            <button
+              type="button"
+              onClick={onExpand}
+              className="flex h-8 w-8 items-center justify-center text-text-3 transition-colors hover:text-text-1"
+              title={t("mini.expand", locale)}
+            >
+              <Maximize2 size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={() => win.close()}
+              className="flex h-8 w-8 items-center justify-center text-text-3 transition-colors hover:bg-danger hover:text-white"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {activeTodos.length === 0 ? (
+            <div className="flex items-center justify-center py-10 text-[16px] text-text-3">
+              {t("todo.empty", locale)} ✨
+            </div>
+          ) : (
+            <>
+              {overdueTodos.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 px-4 pt-2.5 pb-1">
+                    <span className="h-px flex-1 bg-warning/30" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-warning">
+                      {t("mini.overdue", locale)}
                     </span>
-                    <span className="h-px flex-1 bg-border/50" />
+                    <span className="h-px flex-1 bg-warning/30" />
                   </div>
-                )}
-                {todayTodos.map((td, i) => renderTask(td, false, i))}
-              </div>
-            )}
-          </>
-        )}
+                  {overdueTodos.map((td) => renderTask(td, true))}
+                </div>
+              )}
+              {todayTodos.length > 0 && (
+                <div>
+                  {overdueTodos.length > 0 && (
+                    <div className="flex items-center gap-2 px-4 pt-2 pb-1">
+                      <span className="h-px flex-1 bg-border/50" />
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-3">
+                        {t("mini.today", locale)}
+                      </span>
+                      <span className="h-px flex-1 bg-border/50" />
+                    </div>
+                  )}
+                  {todayTodos.map((td, i) => renderTask(td, false, i))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

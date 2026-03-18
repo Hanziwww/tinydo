@@ -12,9 +12,10 @@ interface Props {
   board: PlanningBoard;
   targetDate: string;
   disabled?: boolean;
+  focusSignal?: number;
 }
 
-export function TodoInput({ board, targetDate, disabled = false }: Props) {
+export function TodoInput({ board, targetDate, disabled = false, focusSignal = 0 }: Props) {
   const [title, setTitle] = useState("");
   const [sel, setSel] = useState<Tag[]>([]);
   const [showPicker, setShowPicker] = useState(false);
@@ -35,6 +36,10 @@ export function TodoInput({ board, targetDate, disabled = false }: Props) {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  useEffect(() => {
+    if (!disabled) inputRef.current?.focus();
+  }, [disabled, focusSignal]);
 
   const filtered = tags.filter(
     (tg) =>

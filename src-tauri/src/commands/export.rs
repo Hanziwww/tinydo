@@ -1,11 +1,11 @@
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use tauri::{AppHandle, State};
 
 use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::models::{
-    ensure_unique_ids, ExportEnvelope, ExportSettings, ImportResult, Settings, SubTask, Tag,
-    TagGroup, TaskRelation, TimeSlot, Todo, TodoHistoryKind,
+    ensure_unique_ids, ExportEnvelope, ImportResult, Settings, SubTask, Tag, TagGroup,
+    TaskRelation, TimeSlot, Todo, TodoHistoryKind, WindowPos, WindowRect,
 };
 use crate::reminders;
 
@@ -33,12 +33,7 @@ pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), A
         archived_todos,
         tags,
         tag_groups,
-        settings: ExportSettings {
-            theme: settings.theme,
-            locale: settings.locale,
-            show_timeline: settings.show_timeline,
-            tomorrow_planning_unlock_hour: settings.tomorrow_planning_unlock_hour,
-        },
+        settings,
     };
 
     let json = serde_json::to_string_pretty(&envelope)?;
@@ -140,6 +135,16 @@ struct ImportSettingsPatch {
     locale: Option<String>,
     show_timeline: Option<bool>,
     tomorrow_planning_unlock_hour: Option<u32>,
+    timeline_start_hour: Option<u32>,
+    timeline_end_hour: Option<u32>,
+    user_name: Option<String>,
+    mini_always_on_top: Option<bool>,
+    mini_fade_on_blur: Option<bool>,
+    mini_fade_opacity: Option<f64>,
+    enable_subtasks: Option<bool>,
+    max_duration_days: Option<u32>,
+    full_mode_rect: Option<Option<WindowRect>>,
+    mini_mode_position: Option<Option<WindowPos>>,
 }
 
 impl ImportSettingsPatch {
@@ -148,6 +153,16 @@ impl ImportSettingsPatch {
             && self.locale.is_none()
             && self.show_timeline.is_none()
             && self.tomorrow_planning_unlock_hour.is_none()
+            && self.timeline_start_hour.is_none()
+            && self.timeline_end_hour.is_none()
+            && self.user_name.is_none()
+            && self.mini_always_on_top.is_none()
+            && self.mini_fade_on_blur.is_none()
+            && self.mini_fade_opacity.is_none()
+            && self.enable_subtasks.is_none()
+            && self.max_duration_days.is_none()
+            && self.full_mode_rect.is_none()
+            && self.mini_mode_position.is_none()
     }
 }
 
@@ -220,10 +235,38 @@ fn parse_optional_u32_field(
     }
 }
 
+fn parse_optional_f64_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    label: &str,
+) -> Result<Option<f64>, AppError> {
+    match obj.get(key) {
+        Some(value) => value
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| AppError::custom(format!("{label}格式无效"))),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_nullable_field<T: DeserializeOwned>(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    label: &str,
+) -> Result<Option<Option<T>>, AppError> {
+    match obj.get(key) {
+        Some(value) if value.is_null() => Ok(Some(None)),
+        Some(value) => serde_json::from_value::<T>(value.clone())
+            .map(|parsed| Some(Some(parsed)))
+            .map_err(|_| AppError::custom(format!("{label}格式无效"))),
+        None => Ok(None),
+    }
+}
+
 fn parse_settings_patch(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ImportSettingsPatch, AppError> {
-    let mut patch = ImportSettingsPatch {
+    Ok(ImportSettingsPatch {
         theme: parse_optional_string_field(obj, "theme", "导入主题")?,
         locale: parse_optional_string_field(obj, "locale", "导入语言")?,
         show_timeline: parse_optional_bool_field(obj, "showTimeline", "导入 showTimeline")?,
@@ -232,16 +275,41 @@ fn parse_settings_patch(
             "tomorrowPlanningUnlockHour",
             "导入 tomorrowPlanningUnlockHour",
         )?,
-    };
-    if let Some(hour) = patch.tomorrow_planning_unlock_hour {
-        if hour > 23 {
-            return Err(AppError::custom(
-                "导入 tomorrowPlanningUnlockHour 必须在 0 到 23 之间",
-            ));
-        }
-        patch.tomorrow_planning_unlock_hour = Some(hour);
-    }
-    Ok(patch)
+        timeline_start_hour: parse_optional_u32_field(
+            obj,
+            "timelineStartHour",
+            "导入 timelineStartHour",
+        )?,
+        timeline_end_hour: parse_optional_u32_field(
+            obj,
+            "timelineEndHour",
+            "导入 timelineEndHour",
+        )?,
+        user_name: parse_optional_string_field(obj, "userName", "导入 userName")?,
+        mini_always_on_top: parse_optional_bool_field(
+            obj,
+            "miniAlwaysOnTop",
+            "导入 miniAlwaysOnTop",
+        )?,
+        mini_fade_on_blur: parse_optional_bool_field(obj, "miniFadeOnBlur", "导入 miniFadeOnBlur")?,
+        mini_fade_opacity: parse_optional_f64_field(
+            obj,
+            "miniFadeOpacity",
+            "导入 miniFadeOpacity",
+        )?,
+        enable_subtasks: parse_optional_bool_field(obj, "enableSubtasks", "导入 enableSubtasks")?,
+        max_duration_days: parse_optional_u32_field(
+            obj,
+            "maxDurationDays",
+            "导入 maxDurationDays",
+        )?,
+        full_mode_rect: parse_optional_nullable_field(obj, "fullModeRect", "导入 fullModeRect")?,
+        mini_mode_position: parse_optional_nullable_field(
+            obj,
+            "miniModePosition",
+            "导入 miniModePosition",
+        )?,
+    })
 }
 
 fn normalize_todo(raw: &serde_json::Value) -> Result<Todo, AppError> {
@@ -427,6 +495,36 @@ fn merge_settings_patch(
     if let Some(hour) = patch.tomorrow_planning_unlock_hour {
         settings.tomorrow_planning_unlock_hour = hour;
     }
+    if let Some(start_hour) = patch.timeline_start_hour {
+        settings.timeline_start_hour = start_hour;
+    }
+    if let Some(end_hour) = patch.timeline_end_hour {
+        settings.timeline_end_hour = end_hour;
+    }
+    if let Some(user_name) = &patch.user_name {
+        settings.user_name = user_name.clone();
+    }
+    if let Some(mini_always_on_top) = patch.mini_always_on_top {
+        settings.mini_always_on_top = mini_always_on_top;
+    }
+    if let Some(mini_fade_on_blur) = patch.mini_fade_on_blur {
+        settings.mini_fade_on_blur = mini_fade_on_blur;
+    }
+    if let Some(mini_fade_opacity) = patch.mini_fade_opacity {
+        settings.mini_fade_opacity = mini_fade_opacity;
+    }
+    if let Some(enable_subtasks) = patch.enable_subtasks {
+        settings.enable_subtasks = enable_subtasks;
+    }
+    if let Some(max_duration_days) = patch.max_duration_days {
+        settings.max_duration_days = max_duration_days;
+    }
+    if let Some(full_mode_rect) = &patch.full_mode_rect {
+        settings.full_mode_rect = full_mode_rect.clone();
+    }
+    if let Some(mini_mode_position) = &patch.mini_mode_position {
+        settings.mini_mode_position = mini_mode_position.clone();
+    }
     settings.validate()?;
 
     Ok(Some(settings))
@@ -580,7 +678,7 @@ fn crc32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ExportEnvelope, ExportSettings};
+    use crate::models::{ExportEnvelope, Settings};
     use rusqlite::Connection;
 
     fn test_conn() -> Connection {
@@ -646,7 +744,17 @@ mod tests {
                 "theme": "light",
                 "locale": "en",
                 "showTimeline": false,
-                "tomorrowPlanningUnlockHour": 18
+                "tomorrowPlanningUnlockHour": 18,
+                "timelineStartHour": 8,
+                "timelineEndHour": 22,
+                "userName": "Han",
+                "miniAlwaysOnTop": false,
+                "miniFadeOnBlur": false,
+                "miniFadeOpacity": 0.6,
+                "enableSubtasks": false,
+                "maxDurationDays": 14,
+                "fullModeRect": {"w": 1080.0, "h": 780.0, "x": 120.0, "y": 80.0},
+                "miniModePosition": {"x": 300.0, "y": 160.0}
             }
         })
     }
@@ -757,9 +865,16 @@ mod tests {
         assert_eq!(settings.locale, "en");
         assert!(!settings.show_timeline);
         assert_eq!(settings.tomorrow_planning_unlock_hour, 18);
-        // Non-exported fields should retain defaults
-        assert_eq!(settings.timeline_start_hour, 0);
-        assert_eq!(settings.timeline_end_hour, 24);
+        assert_eq!(settings.timeline_start_hour, 8);
+        assert_eq!(settings.timeline_end_hour, 22);
+        assert_eq!(settings.user_name, "Han");
+        assert!(!settings.mini_always_on_top);
+        assert!(!settings.mini_fade_on_blur);
+        assert_eq!(settings.mini_fade_opacity, 0.6);
+        assert!(!settings.enable_subtasks);
+        assert_eq!(settings.max_duration_days, 14);
+        assert_eq!(settings.full_mode_rect.as_ref().unwrap().w, 1080.0);
+        assert_eq!(settings.mini_mode_position.as_ref().unwrap().x, 300.0);
     }
 
     #[test]
@@ -867,11 +982,12 @@ mod tests {
             archived_todos: vec![],
             tags: vec![tag],
             tag_groups: vec![group],
-            settings: ExportSettings {
+            settings: Settings {
                 theme: "dark".into(),
                 locale: "zh".into(),
                 show_timeline: true,
                 tomorrow_planning_unlock_hour: 20,
+                ..Settings::default()
             },
         };
 

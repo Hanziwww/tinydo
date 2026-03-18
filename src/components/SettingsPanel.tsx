@@ -4,13 +4,15 @@ import { t } from "@/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { exportAllData, importAllData } from "@/lib/export";
 import { parseError } from "@/lib/backend";
-import { showErrorNotice } from "@/lib/errorNotice";
+import { showErrorNotice, showSuccessNotice } from "@/lib/errorNotice";
 import { cn, formatHourLabel } from "@/lib/utils";
 
 export function SettingsPanel() {
-  const [importMsg, setImportMsg] = useState<{ type: "success" | "error"; text: string } | null>(
-    null,
-  );
+  const [transferMsg, setTransferMsg] = useState<{
+    type: "success" | "error";
+    title: string;
+    details?: string[];
+  } | null>(null);
   const [autostart, setAutostart] = useState(false);
 
   useEffect(() => {
@@ -63,6 +65,13 @@ export function SettingsPanel() {
         ? "border-accent bg-accent-soft text-accent"
         : "border-border bg-surface-2 text-text-2 hover:bg-surface-3",
     );
+
+  const showTransferMessage = (
+    next: { type: "success" | "error"; title: string; details?: string[] } | null,
+  ) => {
+    setTransferMsg(next);
+    if (next) setTimeout(() => setTransferMsg(null), 4000);
+  };
 
   return (
     <div className="space-y-7">
@@ -344,7 +353,20 @@ export function SettingsPanel() {
           <button
             type="button"
             onClick={() => {
-              void exportAllData().catch(showErrorNotice);
+              void exportAllData()
+                .then((filePath) => {
+                  if (!filePath) return;
+                  showSuccessNotice(t("settings.export.success", locale));
+                  showTransferMessage({
+                    type: "success",
+                    title: t("settings.export.success", locale),
+                    details: [
+                      t("settings.export.detail.tasks", locale),
+                      t("settings.export.detail.settings", locale),
+                    ],
+                  });
+                })
+                .catch(showErrorNotice);
             }}
             className="flex-1 border border-border bg-surface-2 py-3 text-[16px] font-medium text-text-1 transition-colors hover:bg-surface-3"
           >
@@ -353,22 +375,32 @@ export function SettingsPanel() {
           <button
             type="button"
             onClick={async () => {
-              setImportMsg(null);
+              setTransferMsg(null);
               try {
-                const n = await importAllData();
-                if (n > 0) {
-                  setImportMsg({
-                    type: "success",
-                    text: t("settings.import.success", locale, { n }),
-                  });
-                  setTimeout(() => setImportMsg(null), 3000);
-                }
-              } catch (error) {
-                setImportMsg({
-                  type: "error",
-                  text: parseError(error) || t("settings.import.error", locale),
+                const result = await importAllData();
+                if (!result) return;
+                const total = result.todosCount + result.archivedCount;
+                showTransferMessage({
+                  type: "success",
+                  title: t("settings.import.success", locale, { n: total }),
+                  details: [
+                    t("settings.import.detail.todos", locale, { n: result.todosCount }),
+                    t("settings.import.detail.archived", locale, { n: result.archivedCount }),
+                    t("settings.import.detail.tags", locale, { n: result.tagsCount }),
+                    t("settings.import.detail.groups", locale, { n: result.tagGroupsCount }),
+                    t(
+                      result.settingsUpdated
+                        ? "settings.import.detail.settings_updated"
+                        : "settings.import.detail.settings_skipped",
+                      locale,
+                    ),
+                  ],
                 });
-                setTimeout(() => setImportMsg(null), 3000);
+              } catch (error) {
+                showTransferMessage({
+                  type: "error",
+                  title: parseError(error) || t("settings.import.error", locale),
+                });
               }
             }}
             className="flex-1 border border-border bg-surface-2 py-3 text-[16px] font-medium text-text-1 transition-colors hover:bg-surface-3"
@@ -377,15 +409,26 @@ export function SettingsPanel() {
           </button>
         </div>
         <p className="mt-2 text-[15px] text-text-3">{t("settings.export.desc", locale)}</p>
-        {importMsg && (
-          <p
+        <p className="mt-1 text-[14px] text-text-3">{t("settings.import.desc", locale)}</p>
+        <div className="mt-2 border border-border bg-surface-2/60 px-3 py-2 text-[13px] text-text-3">
+          <p>{t("settings.backup.includes", locale)}</p>
+        </div>
+        {transferMsg && (
+          <div
             className={cn(
-              "mt-1.5 text-[14px] font-medium",
-              importMsg.type === "success" ? "text-success" : "text-danger",
+              "mt-2 space-y-1 border px-3 py-2 text-[14px]",
+              transferMsg.type === "success"
+                ? "border-success/30 bg-success/5 text-success"
+                : "border-danger/30 bg-danger/5 text-danger",
             )}
           >
-            {importMsg.text}
-          </p>
+            <p className="font-medium">{transferMsg.title}</p>
+            {transferMsg.details?.map((detail) => (
+              <p key={detail} className="text-[13px]">
+                {detail}
+              </p>
+            ))}
+          </div>
         )}
       </div>
     </div>

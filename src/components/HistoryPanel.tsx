@@ -85,6 +85,39 @@ export function HistoryPanel() {
         });
 
   const selectedTodos = selectedDate ? (archivedByDate.get(selectedDate) ?? []) : [];
+  const selectedCompletedTodos = selectedTodos.filter(
+    (todo) => todo.historyKind !== "dailyProgress",
+  );
+  const selectedProgressTodos = selectedTodos.filter(
+    (todo) => todo.historyKind === "dailyProgress",
+  );
+  const monthPrefix = `${viewYear}-${pad2(viewMonth + 1)}`;
+  const monthTodos = archivedTodos.filter((todo) =>
+    getTodoHistoryDate(todo).startsWith(monthPrefix),
+  );
+  const monthCompletedCount = monthTodos.filter(
+    (todo) => todo.historyKind !== "dailyProgress",
+  ).length;
+  const monthProgressCount = monthTodos.filter(
+    (todo) => todo.historyKind === "dailyProgress",
+  ).length;
+  const monthDaysCount = new Set(monthTodos.map((todo) => getTodoHistoryDate(todo))).size;
+  const monthTagStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const todo of monthTodos) {
+      for (const tagId of todo.tagIds) {
+        counts.set(tagId, (counts.get(tagId) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([tagId, count]) => ({
+        tag: tags.find((tag) => tag.id === tagId) ?? null,
+        count,
+      }))
+      .filter((entry) => entry.tag !== null);
+  }, [monthTodos, tags]);
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
@@ -153,6 +186,43 @@ export function HistoryPanel() {
         </div>
       </div>
 
+      <div className="grid gap-2 sm:grid-cols-3">
+        <HistorySummaryCard
+          label={t("history.summary.completed", locale)}
+          value={monthCompletedCount}
+          helper={monthLabel}
+        />
+        <HistorySummaryCard
+          label={t("history.summary.progress", locale)}
+          value={monthProgressCount}
+          helper={t("history.summary.progress_helper", locale)}
+        />
+        <HistorySummaryCard
+          label={t("history.summary.days", locale)}
+          value={monthDaysCount}
+          helper={t("history.summary.days_helper", locale)}
+        />
+      </div>
+
+      {monthTagStats.length > 0 && (
+        <div className="space-y-2 border border-border bg-surface-2/40 px-4 py-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[13px] font-medium text-text-2">{t("history.tags.title", locale)}</p>
+            <span className="text-[12px] text-text-3">{monthLabel}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {monthTagStats.map(({ tag, count }) =>
+              tag ? (
+                <div key={tag.id} className="flex items-center gap-1.5">
+                  <TagBadge tag={tag} />
+                  <span className="text-[12px] text-text-3">×{count}</span>
+                </div>
+              ) : null,
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Selected date tasks */}
       {selectedDate && (
         <div className="space-y-1">
@@ -169,66 +239,30 @@ export function HistoryPanel() {
               {t("history.no_tasks", locale)}
             </p>
           ) : (
-            selectedTodos.map((td) => {
-              const diff = DIFFICULTY_CONFIG[td.difficulty];
-              const todoTags = tags.filter((tg) => td.tagIds.includes(tg.id));
-              const time = formatTimeSlots(td.timeSlots);
-              return (
-                <div
-                  key={td.id}
-                  className="flex items-start gap-3 border-b border-border/40 py-2.5 pl-2 pr-4 opacity-70"
-                >
-                  <div className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border-2 border-success bg-success text-white">
-                    <Check size={10} strokeWidth={3} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[15px] leading-snug text-text-1 line-through">{td.title}</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      <span
-                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[13px] font-medium"
-                        style={{
-                          backgroundColor: hexToRgba(diff.color, 0.08),
-                          color: diff.color,
-                        }}
-                      >
-                        <span className="h-1.5 w-1.5" style={{ backgroundColor: diff.color }} />
-                        {t(`diff.${td.difficulty}`, locale)}
-                      </span>
-                      {time && <span className="text-[13px] text-text-3">{time}</span>}
-                      {todoTags.map((tg) => (
-                        <TagBadge key={tg.id} tag={tg} />
-                      ))}
-                    </div>
-                    {td.subtasks.length > 0 && (
-                      <div className="mt-1.5 ml-1 space-y-0.5">
-                        {td.subtasks.map((st) => (
-                          <div key={st.id} className="flex items-center gap-2">
-                            <div
-                              className={cn(
-                                "flex h-3 w-3 shrink-0 items-center justify-center rounded border",
-                                st.completed
-                                  ? "border-success bg-success text-white"
-                                  : "border-text-3/40",
-                              )}
-                            >
-                              {st.completed && <Check size={7} strokeWidth={2.5} />}
-                            </div>
-                            <span
-                              className={cn(
-                                "text-[13px] text-text-2",
-                                st.completed && "line-through text-text-3",
-                              )}
-                            >
-                              {st.title}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+            <div className="space-y-4">
+              {selectedCompletedTodos.length > 0 && (
+                <div className="space-y-1">
+                  <SectionHeader
+                    title={t("history.section.completed", locale)}
+                    count={selectedCompletedTodos.length}
+                  />
+                  {selectedCompletedTodos.map((todo) => (
+                    <HistoryTodoRow key={todo.id} todo={todo} tags={tags} locale={locale} />
+                  ))}
                 </div>
-              );
-            })
+              )}
+              {selectedProgressTodos.length > 0 && (
+                <div className="space-y-1">
+                  <SectionHeader
+                    title={t("history.section.progress", locale)}
+                    count={selectedProgressTodos.length}
+                  />
+                  {selectedProgressTodos.map((todo) => (
+                    <HistoryTodoRow key={todo.id} todo={todo} tags={tags} locale={locale} />
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -238,6 +272,113 @@ export function HistoryPanel() {
           {t("history.select_date", locale)}
         </p>
       )}
+    </div>
+  );
+}
+
+function HistorySummaryCard({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: number;
+  helper: string;
+}) {
+  return (
+    <div className="border border-border bg-surface-2/40 px-4 py-3">
+      <p className="text-[12px] font-medium uppercase tracking-wide text-text-3">{label}</p>
+      <p className="mt-2 text-[24px] font-bold text-text-1">{value}</p>
+      <p className="mt-1 text-[12px] text-text-3">{helper}</p>
+    </div>
+  );
+}
+
+function SectionHeader({ title, count }: { title: string; count: number }) {
+  return (
+    <div className="flex items-center gap-3 pt-1">
+      <div className="h-px flex-1 bg-border/50" />
+      <span className="text-[12px] font-medium text-text-3">
+        {title} · {count}
+      </span>
+      <div className="h-px flex-1 bg-border/50" />
+    </div>
+  );
+}
+
+function HistoryTodoRow({
+  todo,
+  tags,
+  locale,
+}: {
+  todo: ReturnType<typeof useTodoStore.getState>["archivedTodos"][number];
+  tags: ReturnType<typeof useTagStore.getState>["tags"];
+  locale: ReturnType<typeof useSettingsStore.getState>["locale"];
+}) {
+  const diff = DIFFICULTY_CONFIG[todo.difficulty];
+  const todoTags = tags.filter((tag) => todo.tagIds.includes(tag.id));
+  const time = formatTimeSlots(todo.timeSlots);
+  const kindKey =
+    todo.historyKind === "dailyProgress" ? "history.kind.daily_progress" : "history.kind.completed";
+
+  return (
+    <div className="flex items-start gap-3 border-b border-border/40 py-2.5 pl-2 pr-4 opacity-75">
+      <div className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border-2 border-success bg-success text-white">
+        <Check size={10} strokeWidth={3} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[15px] leading-snug text-text-1 line-through">{todo.title}</p>
+          <span className="bg-accent/10 px-2 py-0.5 text-[12px] font-medium text-accent">
+            {t(kindKey, locale)}
+          </span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[13px] font-medium"
+            style={{
+              backgroundColor: hexToRgba(diff.color, 0.08),
+              color: diff.color,
+            }}
+          >
+            <span className="h-1.5 w-1.5" style={{ backgroundColor: diff.color }} />
+            {t(`diff.${todo.difficulty}`, locale)}
+          </span>
+          {time && <span className="text-[13px] text-text-3">{time}</span>}
+          {todoTags.map((tag) => (
+            <TagBadge key={tag.id} tag={tag} />
+          ))}
+        </div>
+        {todo.historyKind === "dailyProgress" && (
+          <p className="mt-1 text-[13px] text-text-3">
+            {t("history.kind.daily_progress_note", locale)}
+          </p>
+        )}
+        {todo.subtasks.length > 0 && (
+          <div className="mt-1.5 ml-1 space-y-0.5">
+            {todo.subtasks.map((subtask) => (
+              <div key={subtask.id} className="flex items-center gap-2">
+                <div
+                  className={cn(
+                    "flex h-3 w-3 shrink-0 items-center justify-center rounded border",
+                    subtask.completed ? "border-success bg-success text-white" : "border-text-3/40",
+                  )}
+                >
+                  {subtask.completed && <Check size={7} strokeWidth={2.5} />}
+                </div>
+                <span
+                  className={cn(
+                    "text-[13px] text-text-2",
+                    subtask.completed && "line-through text-text-3",
+                  )}
+                >
+                  {subtask.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

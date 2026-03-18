@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
 import { withTodoDefaults, stripRelationsToTarget } from "@/lib/todo-helpers";
+import { t } from "@/i18n";
 import type {
   Todo,
   ViewMode,
@@ -11,29 +12,42 @@ import type {
 } from "@/types";
 import { getTodayDateKey, getTomorrowDateKey, shiftDateKey } from "@/lib/utils";
 import * as backend from "@/lib/backend";
-import { showErrorNotice } from "@/lib/errorNotice";
+import { showErrorNotice, showSuccessNotice, showUndoNotice } from "@/lib/errorNotice";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 interface TodoState {
   todos: Todo[];
   archivedTodos: Todo[];
   viewMode: ViewMode;
   filterTagIds: string[];
+  selectionMode: boolean;
+  selectedTodoIds: string[];
   editingTodoId: string | null;
+  highlightedTodoId: string | null;
   _hydrated: boolean;
   _hydrate: (todos: Todo[], archivedTodos: Todo[]) => void;
   setViewMode: (mode: ViewMode) => void;
   toggleFilterTag: (tagId: string) => void;
   clearFilterTags: () => void;
+  setSelectionMode: (enabled: boolean) => void;
+  setSelectedTodoIds: (ids: string[]) => void;
+  toggleTodoSelection: (id: string) => void;
+  clearSelectedTodos: () => void;
   addTodo: (title: string, tagIds?: string[], targetDate?: string) => void;
+  addTimelineTodo: (targetDate: string, start: string, end: string | null) => string | null;
   updateTodo: (id: string, updates: Partial<Omit<Todo, "id">>) => void;
   toggleTodo: (id: string, dateKey?: string) => void;
   deleteTodo: (id: string) => void;
+  batchMoveSelected: (targetDate: string) => void;
+  batchDeleteSelected: () => void;
+  duplicateTodo: (id: string, targetDate: string) => string | null;
   reorderTodos: (activeId: string, overId: string, scopedIds?: string[]) => void;
   reorderSubtasks: (todoId: string, activeId: string, overId: string) => void;
   archiveCompleted: () => void;
   archiveBoardCompleted: (boardDate: string) => void;
   removeTagFromAllTodos: (tagId: string) => void;
   setEditingTodoId: (id: string | null) => void;
+  setHighlightedTodoId: (id: string | null) => void;
   addSubtask: (todoId: string, title: string) => void;
   updateSubtaskTitle: (todoId: string, subtaskId: string, title: string) => void;
   toggleSubtask: (todoId: string, subtaskId: string) => void;
@@ -48,7 +62,9 @@ interface TodoState {
   importArchivedTodos: (incoming: Todo[]) => number;
 }
 
-type TodoRollbackState = Pick<TodoState, "todos" | "archivedTodos" | "editingTodoId">;
+type TodoRollbackState = Pick<TodoState, "todos" | "archivedTodos"> &
+  Partial<Pick<TodoState, "editingTodoId" | "selectionMode" | "selectedTodoIds">>;
+type TodoPersistSnapshot = Pick<TodoRollbackState, "todos" | "archivedTodos">;
 
 function rollbackTodoState(previous: Partial<TodoRollbackState>, error: unknown) {
   useTodoStore.setState(previous);
@@ -75,6 +91,43 @@ function persistDeleteTodo(id: string) {
   return backend.deleteTodo(id);
 }
 
+async function syncTodoCollections(current: TodoPersistSnapshot, target: TodoPersistSnapshot) {
+  const currentIds = new Set([...current.todos, ...current.archivedTodos].map((todo) => todo.id));
+  const targetIds = new Set([...target.todos, ...target.archivedTodos].map((todo) => todo.id));
+  const idsToDelete = Array.from(currentIds).filter((id) => !targetIds.has(id));
+
+  await Promise.all([
+    persistTodos(target.todos),
+    persistArchivedTodos(target.archivedTodos),
+    ...idsToDelete.map((id) => persistDeleteTodo(id)),
+  ]);
+}
+
+function restoreTodoSnapshot(target: TodoRollbackState) {
+  const current = useTodoStore.getState();
+  useTodoStore.setState({
+    todos: target.todos,
+    archivedTodos: target.archivedTodos,
+    editingTodoId: target.editingTodoId ?? null,
+    selectionMode: false,
+    selectedTodoIds: [],
+  });
+  void syncTodoCollections(
+    {
+      todos: current.todos,
+      archivedTodos: current.archivedTodos,
+    },
+    {
+      todos: target.todos,
+      archivedTodos: target.archivedTodos,
+    },
+  ).catch((error: unknown) => rollbackTodoState(target, error));
+}
+
+function getLocale() {
+  return useSettingsStore.getState().locale;
+}
+
 function createHistoryTodo(
   todo: Todo,
   historyDate: string,
@@ -88,6 +141,42 @@ function createHistoryTodo(
     historyDate,
     historySourceTodoId: todo.historySourceTodoId ?? todo.id,
     historyKind,
+  });
+}
+
+function stripRelationsToTargets(todo: Todo, targetIds: Set<string>): Todo {
+  let next = todo;
+  for (const targetId of targetIds) {
+    next = stripRelationsToTarget(next, targetId);
+  }
+  return next;
+}
+
+function cloneTodoForDate(todo: Todo, targetDate: string, order: number): Todo {
+  return withTodoDefaults({
+    ...todo,
+    id: nanoid(),
+    targetDate,
+    order,
+    createdAt: Date.now(),
+    completed: false,
+    reminderMinsBefore: todo.reminderMinsBefore,
+    completedDayKeys: [],
+    archivedDayKeys: [],
+    outgoingRelations: [],
+    historyDate: null,
+    historySourceTodoId: null,
+    historyKind: null,
+    timeSlots: todo.timeSlots.map((slot) => ({
+      ...slot,
+      id: nanoid(),
+    })),
+    subtasks: todo.subtasks.map((subtask, index) => ({
+      ...subtask,
+      id: nanoid(),
+      completed: false,
+      order: index,
+    })),
   });
 }
 
@@ -334,7 +423,10 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   archivedTodos: [],
   viewMode: "all" as ViewMode,
   filterTagIds: [],
+  selectionMode: false,
+  selectedTodoIds: [],
   editingTodoId: null,
+  highlightedTodoId: null,
   _hydrated: false,
 
   _hydrate: (todos, archivedTodos) =>
@@ -346,6 +438,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setEditingTodoId: (id) => set({ editingTodoId: id }),
+  setHighlightedTodoId: (id) => set({ highlightedTodoId: id }),
 
   toggleFilterTag: (tagId) =>
     set((s) => ({
@@ -355,6 +448,31 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     })),
 
   clearFilterTags: () => set({ filterTagIds: [] }),
+
+  setSelectionMode: (enabled) =>
+    set((s) => ({
+      selectionMode: enabled,
+      selectedTodoIds: enabled ? s.selectedTodoIds : [],
+    })),
+
+  setSelectedTodoIds: (ids) =>
+    set({
+      selectionMode: ids.length > 0,
+      selectedTodoIds: Array.from(new Set(ids)),
+    }),
+
+  toggleTodoSelection: (id) =>
+    set((s) => {
+      const nextSelected = s.selectedTodoIds.includes(id)
+        ? s.selectedTodoIds.filter((selectedId) => selectedId !== id)
+        : [...s.selectedTodoIds, id];
+      return {
+        selectionMode: nextSelected.length > 0 || s.selectionMode,
+        selectedTodoIds: nextSelected,
+      };
+    }),
+
+  clearSelectedTodos: () => set({ selectionMode: false, selectedTodoIds: [] }),
 
   addTodo: (title, tagIds = [], targetDate = getTodayDateKey()) => {
     const previousTodos = get().todos;
@@ -385,6 +503,49 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     void persistSingleTodo(todo).catch((error: unknown) => {
       rollbackTodoState({ todos: previousTodos }, error);
     });
+  },
+
+  addTimelineTodo: (targetDate, start, end) => {
+    const previous = {
+      todos: get().todos,
+      editingTodoId: get().editingTodoId,
+      selectionMode: get().selectionMode,
+      selectedTodoIds: get().selectedTodoIds,
+    };
+    const activeOrders = get()
+      .todos.filter((todo) => !todo.completed)
+      .map((todo) => todo.order);
+    const minOrder = activeOrders.length > 0 ? Math.min(...activeOrders) : 0;
+    const locale = getLocale();
+    const todo: Todo = {
+      id: nanoid(),
+      title: t("timeline.new_task", locale),
+      completed: false,
+      tagIds: [],
+      difficulty: 2 as Difficulty,
+      timeSlots: [{ id: nanoid(), start, end }],
+      reminderMinsBefore: null,
+      targetDate,
+      order: minOrder - 1,
+      createdAt: Date.now(),
+      subtasks: [],
+      durationDays: 1,
+      completedDayKeys: [],
+      archivedDayKeys: [],
+      outgoingRelations: [],
+      historyDate: null,
+      historySourceTodoId: null,
+      historyKind: null,
+    };
+    set((s) => ({
+      todos: [todo, ...s.todos],
+      editingTodoId: todo.id,
+      selectionMode: false,
+      selectedTodoIds: [],
+    }));
+    showSuccessNotice(t("notice.timeline_task_created", locale));
+    void persistSingleTodo(todo).catch((error: unknown) => rollbackTodoState(previous, error));
+    return todo.id;
   },
 
   updateTodo: (id, updates) => {
@@ -435,6 +596,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       archivedTodos: get().archivedTodos,
       editingTodoId: get().editingTodoId,
     };
+    const deletedTodo = previous.todos.find((todo) => todo.id === id);
     const updatedActive = previous.todos
       .filter((todo) => todo.id !== id)
       .map((todo) => stripRelationsToTarget(todo, id));
@@ -452,12 +614,138 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       todos: updatedActive,
       archivedTodos: updatedArchived,
       editingTodoId: s.editingTodoId === id ? null : s.editingTodoId,
+      selectedTodoIds: s.selectedTodoIds.filter((selectedId) => selectedId !== id),
     }));
+    const locale = getLocale();
+    showUndoNotice(
+      t("notice.todo_deleted", locale, {
+        title: deletedTodo?.title ?? t("detail.title", locale),
+      }),
+      t("notice.undo", locale),
+      () => restoreTodoSnapshot(previous),
+    );
     void Promise.all([
       persistDeleteTodo(id),
       persistTodoBatch(activeRelationCleanup, false),
       persistTodoBatch(archivedRelationCleanup, true),
     ]).catch((error: unknown) => rollbackTodoState(previous, error));
+  },
+
+  batchMoveSelected: (targetDate) => {
+    const selectedIds = new Set(get().selectedTodoIds);
+    if (selectedIds.size === 0) return;
+    const previous = {
+      todos: get().todos,
+      archivedTodos: get().archivedTodos,
+      editingTodoId: get().editingTodoId,
+      selectionMode: get().selectionMode,
+      selectedTodoIds: get().selectedTodoIds,
+    };
+    set((s) => ({
+      todos: s.todos.map((todo) => {
+        if (!selectedIds.has(todo.id)) return todo;
+        return {
+          ...todo,
+          targetDate,
+          ...(todo.durationDays > 1 ||
+          todo.completedDayKeys.length > 0 ||
+          todo.archivedDayKeys.length > 0
+            ? {
+                completed: false,
+                completedDayKeys: [],
+                archivedDayKeys: [],
+              }
+            : {}),
+        };
+      }),
+      selectionMode: false,
+      selectedTodoIds: [],
+    }));
+    const updated = get().todos.filter((todo) => selectedIds.has(todo.id));
+    const locale = getLocale();
+    showSuccessNotice(t("notice.moved_items", locale, { n: updated.length }));
+    void persistTodoBatch(updated, false).catch((error: unknown) =>
+      rollbackTodoState(previous, error),
+    );
+  },
+
+  batchDeleteSelected: () => {
+    const selectedIds = new Set(get().selectedTodoIds);
+    if (selectedIds.size === 0) return;
+    const previous = {
+      todos: get().todos,
+      archivedTodos: get().archivedTodos,
+      editingTodoId: get().editingTodoId,
+      selectionMode: get().selectionMode,
+      selectedTodoIds: get().selectedTodoIds,
+    };
+    const updatedActive = previous.todos
+      .filter((todo) => !selectedIds.has(todo.id))
+      .map((todo) => stripRelationsToTargets(todo, selectedIds));
+    const updatedArchived = previous.archivedTodos.map((todo) =>
+      stripRelationsToTargets(todo, selectedIds),
+    );
+    const activeRelationCleanup = previous.todos
+      .filter(
+        (todo) =>
+          !selectedIds.has(todo.id) &&
+          todo.outgoingRelations.some((relation) => selectedIds.has(relation.targetTaskId)),
+      )
+      .map((todo) => stripRelationsToTargets(todo, selectedIds));
+    const archivedRelationCleanup = previous.archivedTodos
+      .filter((todo) =>
+        todo.outgoingRelations.some((relation) => selectedIds.has(relation.targetTaskId)),
+      )
+      .map((todo) => stripRelationsToTargets(todo, selectedIds));
+    set({
+      todos: updatedActive,
+      archivedTodos: updatedArchived,
+      editingTodoId:
+        previous.editingTodoId && selectedIds.has(previous.editingTodoId)
+          ? null
+          : previous.editingTodoId,
+      selectionMode: false,
+      selectedTodoIds: [],
+    });
+    const locale = getLocale();
+    showUndoNotice(
+      t("notice.deleted_items", locale, { n: selectedIds.size }),
+      t("notice.undo", locale),
+      () => restoreTodoSnapshot(previous),
+    );
+    void Promise.all([
+      ...Array.from(selectedIds).map((todoId) => persistDeleteTodo(todoId)),
+      persistTodoBatch(activeRelationCleanup, false),
+      persistTodoBatch(archivedRelationCleanup, true),
+    ]).catch((error: unknown) => rollbackTodoState(previous, error));
+  },
+
+  duplicateTodo: (id, targetDate) => {
+    const previous = {
+      todos: get().todos,
+      editingTodoId: get().editingTodoId,
+      selectionMode: get().selectionMode,
+      selectedTodoIds: get().selectedTodoIds,
+    };
+    const source = get().todos.find((todo) => todo.id === id);
+    if (!source) return null;
+    const activeOrders = get()
+      .todos.filter((todo) => !todo.completed)
+      .map((todo) => todo.order);
+    const minOrder = activeOrders.length > 0 ? Math.min(...activeOrders) : 0;
+    const duplicated = cloneTodoForDate(source, targetDate, minOrder - 1);
+    set((s) => ({
+      todos: [duplicated, ...s.todos],
+      editingTodoId: duplicated.id,
+      selectionMode: false,
+      selectedTodoIds: [],
+    }));
+    const locale = getLocale();
+    showSuccessNotice(t("notice.duplicated_item", locale));
+    void persistSingleTodo(duplicated).catch((error: unknown) =>
+      rollbackTodoState(previous, error),
+    );
+    return duplicated.id;
   },
 
   reorderTodos: (activeId, overId, scopedIds) => {
@@ -521,6 +809,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     const previous = {
       todos: get().todos,
       archivedTodos: get().archivedTodos,
+      editingTodoId: get().editingTodoId,
     };
     const historyDate = getTodayDateKey();
     const done = get()
@@ -539,6 +828,12 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         ),
       archivedTodos: [...s.archivedTodos, ...done],
     }));
+    const locale = getLocale();
+    showUndoNotice(
+      t("notice.archived_items", locale, { n: done.length }),
+      t("notice.undo", locale),
+      () => restoreTodoSnapshot(previous),
+    );
     const nextState = get();
     const relationCleanup = nextState.todos.filter((todo) =>
       previous.todos.some(
@@ -557,6 +852,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     const previous = {
       todos: get().todos,
       archivedTodos: get().archivedTodos,
+      editingTodoId: get().editingTodoId,
     };
     const todayK = getTodayDateKey();
     const isToday = boardDate === todayK;
@@ -628,6 +924,12 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       ...fullArchives.map((todo) => createHistoryTodo(todo, boardDate, "completed")),
       ...dailySnapshots,
     ];
+    const locale = getLocale();
+    showUndoNotice(
+      t("notice.archived_items", locale, { n: archivedToSave.length }),
+      t("notice.undo", locale),
+      () => restoreTodoSnapshot(previous),
+    );
 
     void Promise.all([
       persistTodoBatch(updatedSources, false),
