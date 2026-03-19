@@ -22,5 +22,7 @@ pub fn predict_completions(state: State<'_, DbState>) -> Result<Vec<PredictionRe
     let now_ms = chrono::Utc::now().timestamp_millis() as f64;
     let events = db::get_events_in_range(&conn, now_ms - 90.0 * 86_400_000.0, now_ms)?;
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    Ok(predict::predict_all(&active, &archived, &events, &settings, &today))
+    Ok(predict::predict_all(
+        &active, &archived, &events, &settings, &today,
+    ))
 }

@@ -184,16 +184,12 @@ fn days_between_ms(ts_ms: f64, now: f64) -> f64 {
 fn parse_date_to_ms(date_str: &str) -> Option<f64> {
     chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
         .ok()
-        .map(|d| {
-            d.and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .timestamp_millis() as f64
-        })
+        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis() as f64)
 }
 
 fn due_cutoff_ms(todo: &Todo) -> Option<f64> {
-    parse_date_to_ms(&todo.target_date).map(|start_ms| start_ms + DAY_MS * todo.duration_days as f64)
+    parse_date_to_ms(&todo.target_date)
+        .map(|start_ms| start_ms + DAY_MS * todo.duration_days as f64)
 }
 
 fn sigmoid(x: f64) -> f64 {
@@ -231,13 +227,13 @@ fn slot_duration_minutes(slot: &crate::models::TimeSlot) -> f64 {
 }
 
 fn total_scheduled_minutes(todo: &Todo) -> f64 {
-    todo.time_slots.iter().map(slot_duration_minutes).sum::<f64>()
+    todo.time_slots
+        .iter()
+        .map(slot_duration_minutes)
+        .sum::<f64>()
 }
 
-fn overlap_minutes(
-    a: &crate::models::TimeSlot,
-    b: &crate::models::TimeSlot,
-) -> f64 {
+fn overlap_minutes(a: &crate::models::TimeSlot, b: &crate::models::TimeSlot) -> f64 {
     let a_start = parse_hhmm_to_minutes(&a.start).unwrap_or(0);
     let a_end = a
         .end
@@ -399,7 +395,7 @@ fn bucket_value(bucket: u8) -> String {
     }
 }
 
-fn build_event_index<'a>(events: &'a [TinyEvent]) -> HashMap<String, Vec<&'a TinyEvent>> {
+fn build_event_index(events: &[TinyEvent]) -> HashMap<String, Vec<&TinyEvent>> {
     let mut index: HashMap<String, Vec<&TinyEvent>> = HashMap::new();
     for event in events {
         index.entry(event.todo_id.clone()).or_default().push(event);
@@ -481,13 +477,14 @@ fn build_training_samples(
         let Some(due_cutoff) = due_cutoff_ms(todo) else {
             continue;
         };
-        let outcome_ms = if let Some(history_ms) = todo.history_date.as_deref().and_then(parse_date_to_ms) {
-            history_ms
-        } else if todo.completed {
-            due_cutoff
-        } else {
-            today_ms
-        };
+        let outcome_ms =
+            if let Some(history_ms) = todo.history_date.as_deref().and_then(parse_date_to_ms) {
+                history_ms
+            } else if todo.completed {
+                due_cutoff
+            } else {
+                today_ms
+            };
         let days_ago = days_between_ms(outcome_ms, now_ms);
         let decay = decay_weight(days_ago);
         if decay < 1e-9 {
@@ -583,8 +580,8 @@ fn global_baseline(samples: &[TrainingSample]) -> (f64, f64) {
     if total_weight <= 1e-9 {
         return (0.5, 0.0);
     }
-    let baseline = (0.5 * GLOBAL_PRIOR_STRENGTH + success_weight)
-        / (GLOBAL_PRIOR_STRENGTH + total_weight);
+    let baseline =
+        (0.5 * GLOBAL_PRIOR_STRENGTH + success_weight) / (GLOBAL_PRIOR_STRENGTH + total_weight);
     (baseline.clamp(0.05, 0.95), total_weight)
 }
 
@@ -757,8 +754,8 @@ where
         return None;
     }
 
-    let posterior_rate =
-        (baseline_rate * FACTOR_PRIOR_STRENGTH + success_weight) / (FACTOR_PRIOR_STRENGTH + total_weight);
+    let posterior_rate = (baseline_rate * FACTOR_PRIOR_STRENGTH + success_weight)
+        / (FACTOR_PRIOR_STRENGTH + total_weight);
     let reliability = total_weight / (total_weight + FACTOR_PRIOR_STRENGTH);
     let delta_logit = (logit(posterior_rate) - logit(baseline_rate)) * weight_scale * reliability;
     let impact = sigmoid(logit(baseline_rate) + delta_logit) - baseline_rate;
@@ -814,7 +811,9 @@ fn maybe_push_factor(
     weight_scale: f64,
     predicate: impl Fn(&TaskFeatures) -> bool,
 ) {
-    if let Some(estimate) = estimate_factor(kind, value, samples, baseline_rate, weight_scale, predicate) {
+    if let Some(estimate) =
+        estimate_factor(kind, value, samples, baseline_rate, weight_scale, predicate)
+    {
         estimates.push(estimate);
     }
 }
@@ -872,7 +871,9 @@ fn predict_single(
     let current_event_stats = event_stats_for(todo.id.as_str(), today_ms, &event_index);
     let peers = all_active_todos
         .iter()
-        .filter(|peer| peer.id != todo.id && peer.target_date == todo.target_date && !peer.completed)
+        .filter(|peer| {
+            peer.id != todo.id && peer.target_date == todo.target_date && !peer.completed
+        })
         .collect::<Vec<_>>();
     let current = extract_features(todo, &current_event_stats, today_ms, &peers, settings);
     let penalty_model = build_difficulty_penalty_model(&scoped_samples, baseline_rate);
@@ -966,7 +967,10 @@ fn predict_single(
     );
 
     let baseline_logit = logit(baseline_rate);
-    let context_logit = estimates.iter().map(|estimate| estimate.delta_logit).sum::<f64>();
+    let context_logit = estimates
+        .iter()
+        .map(|estimate| estimate.delta_logit)
+        .sum::<f64>();
     let reference_logit = baseline_logit + context_logit;
     if let Some(estimate) = penalty_factor(
         PredictionFactorKind::DifficultyPenalty,
@@ -1009,15 +1013,11 @@ fn predict_single(
 
     let raw_logit = reference_logit - penalty.total;
     let calibration = effective_sample_size / (effective_sample_size + CALIBRATION_STRENGTH);
-    let calibrated_logit = baseline_logit + (raw_logit - baseline_logit) * calibration.clamp(0.2, 1.0);
+    let calibrated_logit =
+        baseline_logit + (raw_logit - baseline_logit) * calibration.clamp(0.2, 1.0);
     let probability = round_probability(sigmoid(calibrated_logit));
 
-    estimates.sort_by(|a, b| {
-        b.factor
-            .impact
-            .abs()
-            .total_cmp(&a.factor.impact.abs())
-    });
+    estimates.sort_by(|a, b| b.factor.impact.abs().total_cmp(&a.factor.impact.abs()));
 
     PredictionResult {
         todo_id: todo.id.clone(),
@@ -1045,14 +1045,19 @@ pub fn predict_all(
 ) -> Vec<PredictionResult> {
     let now = now_ms();
     let today_ms = parse_date_to_ms(today_str).unwrap_or(now);
-    let samples = build_training_samples(archived_todos, active_todos, events, settings, now, today_ms);
+    let samples = build_training_samples(
+        archived_todos,
+        active_todos,
+        events,
+        settings,
+        now,
+        today_ms,
+    );
 
     active_todos
         .iter()
         .filter(|todo| !todo.completed)
-        .map(|todo| {
-            predict_single(todo, active_todos, &samples, events, settings, today_ms)
-        })
+        .map(|todo| predict_single(todo, active_todos, &samples, events, settings, today_ms))
         .collect()
 }
 
@@ -1134,14 +1139,20 @@ mod tests {
         let history = vec![make_todo("h1", 2, true, "2026-03-17")];
         let results = predict_all(&active, &history, &[], &settings(), "2026-03-19");
         assert_eq!(results[0].probability, 0.0);
-        assert_eq!(results[0].factors[0].kind, PredictionFactorKind::OverdueStatus);
+        assert_eq!(
+            results[0].factors[0].kind,
+            PredictionFactorKind::OverdueStatus
+        );
     }
 
     #[test]
     fn active_completed_success_contributes_before_archive() {
         let mut completed_active = make_todo("done", 2, true, "2026-03-19");
         completed_active.history_kind = None;
-        let active = vec![make_todo("target", 2, false, "2026-03-19"), completed_active];
+        let active = vec![
+            make_todo("target", 2, false, "2026-03-19"),
+            completed_active,
+        ];
         let results = predict_all(&active, &[], &[], &settings(), "2026-03-19");
         assert!(results[0].effective_sample_size > 0.0);
         assert!(results[0].probability > 0.5);
@@ -1154,12 +1165,22 @@ mod tests {
 
         let mut history = Vec::new();
         for i in 0..5 {
-            let mut t = make_todo(&format!("hw{i}"), 2, false, &format!("2026-03-{:02}", 12 + i));
+            let mut t = make_todo(
+                &format!("hw{i}"),
+                2,
+                false,
+                &format!("2026-03-{:02}", 12 + i),
+            );
             t.tag_ids = vec!["work".into()];
             history.push(t);
         }
         for i in 0..5 {
-            let mut t = make_todo(&format!("hp{i}"), 2, true, &format!("2026-03-{:02}", 12 + i));
+            let mut t = make_todo(
+                &format!("hp{i}"),
+                2,
+                true,
+                &format!("2026-03-{:02}", 12 + i),
+            );
             t.tag_ids = vec!["personal".into()];
             history.push(t);
         }
@@ -1172,19 +1193,67 @@ mod tests {
     fn difficulty_is_monotonic() {
         let mut history = Vec::new();
         for i in 0..6 {
-            history.push(make_todo(&format!("easy{i}"), 1, true, &format!("2026-03-{:02}", 12 + i)));
+            history.push(make_todo(
+                &format!("easy{i}"),
+                1,
+                true,
+                &format!("2026-03-{:02}", 12 + i),
+            ));
         }
         for i in 0..4 {
-            history.push(make_todo(&format!("mid{i}"), 2, true, &format!("2026-03-{:02}", 12 + i)));
-            history.push(make_todo(&format!("midb{i}"), 3, false, &format!("2026-03-{:02}", 12 + i)));
+            history.push(make_todo(
+                &format!("mid{i}"),
+                2,
+                true,
+                &format!("2026-03-{:02}", 12 + i),
+            ));
+            history.push(make_todo(
+                &format!("midb{i}"),
+                3,
+                false,
+                &format!("2026-03-{:02}", 12 + i),
+            ));
         }
         for i in 0..6 {
-            history.push(make_todo(&format!("hard{i}"), 4, false, &format!("2026-03-{:02}", 12 + i)));
+            history.push(make_todo(
+                &format!("hard{i}"),
+                4,
+                false,
+                &format!("2026-03-{:02}", 12 + i),
+            ));
         }
-        let p1 = predict_all(&[make_todo("a1", 1, false, "2026-03-19")], &history, &[], &settings(), "2026-03-19")[0].probability;
-        let p2 = predict_all(&[make_todo("a2", 2, false, "2026-03-19")], &history, &[], &settings(), "2026-03-19")[0].probability;
-        let p3 = predict_all(&[make_todo("a3", 3, false, "2026-03-19")], &history, &[], &settings(), "2026-03-19")[0].probability;
-        let p4 = predict_all(&[make_todo("a4", 4, false, "2026-03-19")], &history, &[], &settings(), "2026-03-19")[0].probability;
+        let p1 = predict_all(
+            &[make_todo("a1", 1, false, "2026-03-19")],
+            &history,
+            &[],
+            &settings(),
+            "2026-03-19",
+        )[0]
+        .probability;
+        let p2 = predict_all(
+            &[make_todo("a2", 2, false, "2026-03-19")],
+            &history,
+            &[],
+            &settings(),
+            "2026-03-19",
+        )[0]
+        .probability;
+        let p3 = predict_all(
+            &[make_todo("a3", 3, false, "2026-03-19")],
+            &history,
+            &[],
+            &settings(),
+            "2026-03-19",
+        )[0]
+        .probability;
+        let p4 = predict_all(
+            &[make_todo("a4", 4, false, "2026-03-19")],
+            &history,
+            &[],
+            &settings(),
+            "2026-03-19",
+        )[0]
+        .probability;
         assert!(p1 >= p2 && p2 >= p3 && p3 >= p4);
     }
 
@@ -1206,13 +1275,35 @@ mod tests {
         history.extend(history_bad);
 
         let events = vec![
-            make_event("b1", EventType::MovedToTomorrow, parse_date_to_ms("2026-03-13").unwrap()),
-            make_event("b2", EventType::DateChanged, parse_date_to_ms("2026-03-14").unwrap()),
-            make_event("b3", EventType::MovedToTomorrow, parse_date_to_ms("2026-03-15").unwrap()),
-            make_event("target", EventType::DateChanged, parse_date_to_ms("2026-03-18").unwrap()),
+            make_event(
+                "b1",
+                EventType::MovedToTomorrow,
+                parse_date_to_ms("2026-03-13").unwrap(),
+            ),
+            make_event(
+                "b2",
+                EventType::DateChanged,
+                parse_date_to_ms("2026-03-14").unwrap(),
+            ),
+            make_event(
+                "b3",
+                EventType::MovedToTomorrow,
+                parse_date_to_ms("2026-03-15").unwrap(),
+            ),
+            make_event(
+                "target",
+                EventType::DateChanged,
+                parse_date_to_ms("2026-03-18").unwrap(),
+            ),
         ];
 
-        let results = predict_all(&[target.clone()], &history, &events, &settings(), "2026-03-19");
+        let results = predict_all(
+            &[target.clone()],
+            &history,
+            &events,
+            &settings(),
+            "2026-03-19",
+        );
         let control = predict_all(&[target], &history, &[], &settings(), "2026-03-19");
         assert!(results[0].probability < control[0].probability);
         assert!(results[0]
@@ -1233,7 +1324,12 @@ mod tests {
 
         let mut history = Vec::new();
         for i in 0..4 {
-            let mut t = make_todo(&format!("morning{i}"), 2, true, &format!("2026-03-{:02}", 12 + i));
+            let mut t = make_todo(
+                &format!("morning{i}"),
+                2,
+                true,
+                &format!("2026-03-{:02}", 12 + i),
+            );
             t.time_slots = vec![TimeSlot {
                 id: format!("mts{i}"),
                 start: "09:00".into(),
@@ -1243,7 +1339,12 @@ mod tests {
             history.push(t);
         }
         for i in 0..4 {
-            let mut t = make_todo(&format!("none{i}"), 2, false, &format!("2026-03-{:02}", 12 + i));
+            let mut t = make_todo(
+                &format!("none{i}"),
+                2,
+                false,
+                &format!("2026-03-{:02}", 12 + i),
+            );
             t.reminder_mins_before = None;
             history.push(t);
         }
@@ -1256,10 +1357,20 @@ mod tests {
     fn subtask_load_is_monotonic() {
         let mut history = Vec::new();
         for i in 0..5 {
-            history.push(make_todo(&format!("s0-{i}"), 2, true, &format!("2026-03-{:02}", 10 + i)));
+            history.push(make_todo(
+                &format!("s0-{i}"),
+                2,
+                true,
+                &format!("2026-03-{:02}", 10 + i),
+            ));
         }
         for i in 0..5 {
-            let mut todo = make_todo(&format!("s3-{i}"), 2, false, &format!("2026-03-{:02}", 15 + i));
+            let mut todo = make_todo(
+                &format!("s3-{i}"),
+                2,
+                false,
+                &format!("2026-03-{:02}", 15 + i),
+            );
             todo.subtasks = (0..4)
                 .map(|idx| crate::models::SubTask {
                     id: format!("sub-{i}-{idx}"),
@@ -1291,10 +1402,20 @@ mod tests {
     fn duration_load_is_monotonic() {
         let mut history = Vec::new();
         for i in 0..5 {
-            history.push(make_todo(&format!("d1-{i}"), 2, true, &format!("2026-03-{:02}", 10 + i)));
+            history.push(make_todo(
+                &format!("d1-{i}"),
+                2,
+                true,
+                &format!("2026-03-{:02}", 10 + i),
+            ));
         }
         for i in 0..5 {
-            let mut todo = make_todo(&format!("d5-{i}"), 2, false, &format!("2026-03-{:02}", 15 + i));
+            let mut todo = make_todo(
+                &format!("d5-{i}"),
+                2,
+                false,
+                &format!("2026-03-{:02}", 15 + i),
+            );
             todo.duration_days = 5;
             history.push(todo);
         }
@@ -1302,7 +1423,8 @@ mod tests {
         let short = make_todo("short", 2, false, "2026-03-19");
         let mut long = make_todo("long", 2, false, "2026-03-19");
         long.duration_days = 5;
-        let p_short = predict_all(&[short], &history, &[], &settings(), "2026-03-19")[0].probability;
+        let p_short =
+            predict_all(&[short], &history, &[], &settings(), "2026-03-19")[0].probability;
         let p_long = predict_all(&[long], &history, &[], &settings(), "2026-03-19")[0].probability;
         assert!(p_short >= p_long);
     }
@@ -1311,7 +1433,12 @@ mod tests {
     fn time_load_is_monotonic() {
         let mut history = Vec::new();
         for i in 0..4 {
-            let mut low = make_todo(&format!("low-{i}"), 2, true, &format!("2026-03-{:02}", 10 + i));
+            let mut low = make_todo(
+                &format!("low-{i}"),
+                2,
+                true,
+                &format!("2026-03-{:02}", 10 + i),
+            );
             low.time_slots = vec![TimeSlot {
                 id: format!("lts-{i}"),
                 start: "09:00".into(),
@@ -1320,14 +1447,24 @@ mod tests {
             history.push(low);
         }
         for i in 0..4 {
-            let mut high = make_todo(&format!("high-{i}"), 2, false, &format!("2026-03-{:02}", 15 + i));
+            let mut high = make_todo(
+                &format!("high-{i}"),
+                2,
+                false,
+                &format!("2026-03-{:02}", 15 + i),
+            );
             high.time_slots = vec![TimeSlot {
                 id: format!("hts-{i}"),
                 start: "09:00".into(),
                 end: Some("12:00".into()),
             }];
             history.push(high.clone());
-            let mut peer = make_todo(&format!("peer-{i}"), 2, false, &format!("2026-03-{:02}", 15 + i));
+            let mut peer = make_todo(
+                &format!("peer-{i}"),
+                2,
+                false,
+                &format!("2026-03-{:02}", 15 + i),
+            );
             peer.time_slots = vec![TimeSlot {
                 id: format!("pts-{i}"),
                 start: "09:30".into(),
@@ -1355,9 +1492,16 @@ mod tests {
             end: Some("11:30".into()),
         }];
 
-        let p_low = predict_all(&[low_load], &history, &[], &settings(), "2026-03-19")[0].probability;
-        let p_high =
-            predict_all(&[high_load, sibling], &history, &[], &settings(), "2026-03-19")[0].probability;
+        let p_low =
+            predict_all(&[low_load], &history, &[], &settings(), "2026-03-19")[0].probability;
+        let p_high = predict_all(
+            &[high_load, sibling],
+            &history,
+            &[],
+            &settings(),
+            "2026-03-19",
+        )[0]
+        .probability;
         assert!(p_low >= p_high);
     }
 
@@ -1365,20 +1509,40 @@ mod tests {
     fn high_difficulty_and_long_duration_interaction_is_stronger() {
         let mut history = Vec::new();
         for i in 0..4 {
-            history.push(make_todo(&format!("easy-short-{i}"), 1, true, &format!("2026-03-{:02}", 10 + i)));
+            history.push(make_todo(
+                &format!("easy-short-{i}"),
+                1,
+                true,
+                &format!("2026-03-{:02}", 10 + i),
+            ));
         }
         for i in 0..4 {
-            let mut todo = make_todo(&format!("hard-long-{i}"), 4, false, &format!("2026-03-{:02}", 15 + i));
+            let mut todo = make_todo(
+                &format!("hard-long-{i}"),
+                4,
+                false,
+                &format!("2026-03-{:02}", 15 + i),
+            );
             todo.duration_days = 5;
             history.push(todo);
         }
         for i in 0..4 {
-            let mut todo = make_todo(&format!("easy-long-{i}"), 1, false, &format!("2026-03-{:02}", 20 + i));
+            let mut todo = make_todo(
+                &format!("easy-long-{i}"),
+                1,
+                false,
+                &format!("2026-03-{:02}", 20 + i),
+            );
             todo.duration_days = 5;
             history.push(todo);
         }
         for i in 0..4 {
-            history.push(make_todo(&format!("hard-short-{i}"), 4, false, &format!("2026-03-{:02}", 24 + i)));
+            history.push(make_todo(
+                &format!("hard-short-{i}"),
+                4,
+                false,
+                &format!("2026-03-{:02}", 24 + i),
+            ));
         }
 
         let easy_short = make_todo("easy-short-current", 1, false, "2026-03-19");
@@ -1409,7 +1573,10 @@ mod tests {
         let hard = make_todo("hard", 4, false, "2026-03-19");
         let p_easy = predict_all(&[easy], &[], &[], &settings(), "2026-03-19")[0].probability;
         let p_hard = predict_all(&[hard], &[], &[], &settings(), "2026-03-19")[0].probability;
-        assert!(p_easy > p_hard, "easy={p_easy} should be > hard={p_hard} even with no history");
+        assert!(
+            p_easy > p_hard,
+            "easy={p_easy} should be > hard={p_hard} even with no history"
+        );
     }
 
     #[test]

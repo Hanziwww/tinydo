@@ -228,7 +228,9 @@ export function TodoDetail() {
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-[13px] text-text-3">
-                  <span>{t("predict.samples", locale, { n: prediction.effectiveSampleSize.toFixed(1) })}</span>
+                  <span>
+                    {t("predict.samples", locale, { n: prediction.effectiveSampleSize.toFixed(1) })}
+                  </span>
                   <span>
                     {t("predict.difficulty_penalty", locale)}{" "}
                     {`${(prediction.difficultyPenalty * 100).toFixed(1)}%`}

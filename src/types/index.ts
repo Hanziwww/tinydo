@@ -93,8 +93,8 @@ export interface TinyEvent {
   todoId: string;
   eventType: EventType;
   field: string | null;
-  oldValue: unknown | null;
-  newValue: unknown | null;
+  oldValue: unknown;
+  newValue: unknown;
   timestamp: number;
 }
 

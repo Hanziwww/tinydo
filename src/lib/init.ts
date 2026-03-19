@@ -162,7 +162,7 @@ export function settingsToStore(s: BackendSettings) {
     maxDurationDays: s.maxDurationDays,
     fullModeRect: s.fullModeRect,
     miniModePosition: s.miniModePosition,
-    eventDebounceSeconds: s.eventDebounceSeconds ?? 10,
+    eventDebounceSeconds: s.eventDebounceSeconds,
   };
 }
 

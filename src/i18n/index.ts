@@ -560,7 +560,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "predict.time_load_ratio": "Time load",
 
     "settings.event_debounce": "Event debounce time",
-    "settings.event_debounce.desc": "Repeated changes within this window only record the final value",
+    "settings.event_debounce.desc":
+      "Repeated changes within this window only record the final value",
     "settings.event_debounce.unit": "seconds",
 
     "notice.undo": "Undo",

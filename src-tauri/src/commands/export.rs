@@ -5,7 +5,7 @@ use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::models::{
     ensure_unique_ids, ExportEnvelope, ImportResult, Settings, SubTask, Tag, TagGroup,
-    TaskRelation, TinyEvent, TimeSlot, Todo, TodoHistoryKind, WindowPos, WindowRect,
+    TaskRelation, TimeSlot, TinyEvent, Todo, TodoHistoryKind, WindowPos, WindowRect,
 };
 use crate::reminders;
 

@@ -320,10 +320,7 @@ function HistoryEventSection({
         <div className="h-px flex-1 bg-border/50" />
         <span className="flex items-center gap-1 text-[12px] font-medium text-text-3">
           {t("event.history_section", locale)} · {events.length}
-          <ChevronDown
-            size={12}
-            className={cn("transition-transform", expanded && "rotate-180")}
-          />
+          <ChevronDown size={12} className={cn("transition-transform", expanded && "rotate-180")} />
         </span>
         <div className="h-px flex-1 bg-border/50" />
       </button>

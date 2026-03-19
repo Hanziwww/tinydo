@@ -107,16 +107,8 @@ export function PredictionBadge({
       : "text-[13px] font-medium leading-none tabular-nums text-text-3";
 
   return (
-    <span
-      className={containerClass}
-      title={buildPredictionTitle(prediction, locale)}
-    >
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        className="shrink-0"
-      >
+    <span className={containerClass} title={buildPredictionTitle(prediction, locale)}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
         <circle
           cx={size / 2}
           cy={size / 2}

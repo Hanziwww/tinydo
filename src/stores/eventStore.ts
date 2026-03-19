@@ -32,7 +32,7 @@ const pendingMap = new Map<string, PendingEntry>();
 const inFlightSaves = new Set<Promise<void>>();
 
 function getDebounceMs(): number {
-  return (useSettingsStore.getState().eventDebounceSeconds ?? 10) * 1000;
+  return useSettingsStore.getState().eventDebounceSeconds * 1000;
 }
 
 function trackSave(promise: Promise<void>) {

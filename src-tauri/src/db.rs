@@ -246,8 +246,7 @@ pub fn get_events_for_todo(conn: &Connection, todo_id: &str) -> Result<Vec<TinyE
     let mut stmt =
         conn.prepare("SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events WHERE todo_id = ?1 ORDER BY timestamp ASC")?;
     let rows = stmt.query_map(params![todo_id], parse_event_row)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::from)
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
 pub fn get_events_for_date(
@@ -259,8 +258,7 @@ pub fn get_events_for_date(
         "SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events WHERE timestamp >= ?1 AND timestamp < ?2 ORDER BY timestamp ASC",
     )?;
     let rows = stmt.query_map(params![day_start_ms, day_end_ms], parse_event_row)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::from)
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
 pub fn get_events_in_range(
@@ -272,8 +270,7 @@ pub fn get_events_in_range(
         "SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC",
     )?;
     let rows = stmt.query_map(params![from_ms, to_ms], parse_event_row)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::from)
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
 pub fn get_all_events(conn: &Connection) -> Result<Vec<TinyEvent>, AppError> {
@@ -281,8 +278,7 @@ pub fn get_all_events(conn: &Connection) -> Result<Vec<TinyEvent>, AppError> {
         "SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events ORDER BY timestamp ASC",
     )?;
     let rows = stmt.query_map([], parse_event_row)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::from)
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
 pub fn clear_events(conn: &Connection) -> Result<(), AppError> {
@@ -300,8 +296,7 @@ fn parse_event_row(row: &rusqlite::Row) -> rusqlite::Result<TinyEvent> {
     let timestamp: f64 = row.get(6)?;
 
     let quoted = format!("\"{}\"", event_type_str);
-    let event_type: EventType =
-        serde_json::from_str(&quoted).unwrap_or(EventType::Created);
+    let event_type: EventType = serde_json::from_str(&quoted).unwrap_or(EventType::Created);
     let old_value = old_value_str.and_then(|s| serde_json::from_str(&s).ok());
     let new_value = new_value_str.and_then(|s| serde_json::from_str(&s).ok());
 
