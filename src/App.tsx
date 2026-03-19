@@ -15,6 +15,7 @@ import {
   isTomorrowPlanningUnlocked,
 } from "@/lib/utils";
 import { t } from "@/i18n";
+import { isMobile, isDesktop } from "@/lib/platform";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
@@ -43,6 +44,7 @@ import { ConflictDialog } from "@/components/sync/ConflictDialog";
 const MINI_W = 320;
 const MINI_H = 420;
 const EASE_OUT_EXPO: [number, number, number, number] = [0.16, 1, 0.3, 1];
+const mobile = isMobile();
 
 function App() {
   const [showTags, setShowTags] = useState(false);
@@ -63,7 +65,6 @@ function App() {
   const hydrated = useTodoStore((s) => s._hydrated);
   const theme = useSettingsStore((s) => s.theme);
 
-  // Backend initialization: load data from SQLite (with localStorage migration)
   useEffect(() => {
     initBackendData()
       .then((data) => {
@@ -95,6 +96,7 @@ function App() {
   }, [hydrated]);
 
   useEffect(() => {
+    if (mobile) return;
     const unlisten = listen("window-restored", () => {
       const el = rootRef.current;
       if (!el) return;
@@ -164,6 +166,7 @@ function App() {
   }, [searchOpen, searchFocusSignal]);
 
   useEffect(() => {
+    if (mobile) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         if (board === "history") return;
@@ -207,6 +210,7 @@ function App() {
   const setMiniModePosition = useSettingsStore((s) => s.setMiniModePosition);
 
   const enterMini = useCallback(async () => {
+    if (mobile) return;
     setModeTransitioning(true);
     await new Promise((r) => setTimeout(r, 150));
     const win = getCurrentWindow();
@@ -237,6 +241,7 @@ function App() {
   }, [miniOnTop, setFullModeRect]);
 
   const exitMini = useCallback(async () => {
+    if (mobile) return;
     setModeTransitioning(true);
     await new Promise((r) => setTimeout(r, 150));
     const win = getCurrentWindow();
@@ -308,21 +313,47 @@ function App() {
                 ease: EASE_OUT_EXPO,
               }}
             >
-              {mini ? (
+              {!mobile && mini ? (
                 <div className="mini-mode flex h-full flex-col text-text-1">
                   <div className="mini-mode-inner flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-1">
                     <MiniMode onExpand={exitMini} />
                   </div>
                 </div>
               ) : (
-                <div className="relative flex h-full min-h-0 select-none flex-col text-text-1">
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-1">
-                    <TitleBar onMiniMode={enterMini} />
+                <div
+                  className={cn(
+                    "relative flex h-full min-h-0 flex-col text-text-1",
+                    isDesktop() && "select-none",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-1",
+                      mobile && "mobile-safe-top",
+                    )}
+                  >
+                    {isDesktop() && <TitleBar onMiniMode={enterMini} />}
 
-                    <header className="shrink-0 border-b border-border px-6 pb-3 pt-3">
+                    <header
+                      className={cn(
+                        "shrink-0 border-b border-border pb-3 pt-3",
+                        mobile ? "px-4" : "px-6",
+                      )}
+                    >
                       <div className="flex items-center justify-between">
-                        <FadeTransition transitionKey={board} className="flex items-baseline gap-3">
-                          <h1 className="text-[22px] font-extrabold leading-tight tracking-tight">
+                        <FadeTransition
+                          transitionKey={board}
+                          className={cn(
+                            "flex items-baseline gap-3",
+                            mobile && "flex-col gap-0.5",
+                          )}
+                        >
+                          <h1
+                            className={cn(
+                              "font-extrabold leading-tight tracking-tight",
+                              mobile ? "text-[20px]" : "text-[22px]",
+                            )}
+                          >
                             {greeting}
                           </h1>
                           <p className="text-[14px] text-text-3">{formatDate(dispDate, locale)}</p>
@@ -334,7 +365,7 @@ function App() {
                               {t("status.overdue", locale, { n: overdueN })}
                             </span>
                           )}
-                          {!unlocked && (
+                          {!unlocked && !mobile && (
                             <span className="bg-surface-2 px-2.5 py-1 text-[13px] text-text-3">
                               {t("planning.unlock_at", locale, {
                                 time: formatHourLabel(unlockHour, locale),
@@ -349,39 +380,41 @@ function App() {
                                 else openSearch();
                               }}
                               className={cn(
-                                "p-1.5 transition-colors",
+                                "transition-colors",
+                                mobile ? "p-2.5" : "p-1.5",
                                 searchOpen
                                   ? "bg-accent-soft text-accent"
                                   : "text-text-3 hover:bg-surface-2 hover:text-text-1",
                               )}
-                              title="Ctrl+F"
                             >
-                              <Search size={17} />
+                              <Search size={mobile ? 20 : 17} />
                             </button>
                           )}
                           <button
                             type="button"
                             onClick={() => setShowTags(!showTags)}
                             className={cn(
-                              "p-1.5 transition-colors",
+                              "transition-colors",
+                              mobile ? "p-2.5" : "p-1.5",
                               showTags
                                 ? "bg-accent-soft text-accent"
                                 : "text-text-3 hover:bg-surface-2 hover:text-text-1",
                             )}
                           >
-                            <Hash size={17} />
+                            <Hash size={mobile ? 20 : 17} />
                           </button>
                           <button
                             type="button"
                             onClick={() => setShowSettings(!showSettings)}
                             className={cn(
-                              "p-1.5 transition-colors",
+                              "transition-colors",
+                              mobile ? "p-2.5" : "p-1.5",
                               showSettings
                                 ? "bg-accent-soft text-accent"
                                 : "text-text-3 hover:bg-surface-2 hover:text-text-1",
                             )}
                           >
-                            <Settings2 size={17} />
+                            <Settings2 size={mobile ? 20 : 17} />
                           </button>
                         </div>
                       </div>
@@ -504,7 +537,12 @@ function App() {
                               <TodoList board={board} boardDate={bDate} searchQuery={searchQuery} />
                             </FadeTransition>
                             {showTimeline && (
-                              <div className="shrink-0 border-t border-border px-6 py-3">
+                              <div
+                                className={cn(
+                                  "shrink-0 border-t border-border py-3",
+                                  mobile ? "px-4" : "px-6",
+                                )}
+                              >
                                 <Timeline
                                   board={board}
                                   boardDate={bDate}
@@ -517,25 +555,29 @@ function App() {
                         )}
                       </main>
 
-                      <AnimatePresence>
-                        {showTags && (
-                          <motion.aside
-                            key="tag-sidebar"
-                            className="flex shrink-0 flex-col border-l border-border overflow-hidden"
-                            initial={{ width: 0, opacity: 0 }}
-                            animate={{ width: 300, opacity: 1 }}
-                            exit={{ width: 0, opacity: 0 }}
-                            transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
-                          >
-                            <div className="w-[300px] flex-1 overflow-y-auto p-5">
-                              <TagManager />
-                            </div>
-                          </motion.aside>
-                        )}
-                      </AnimatePresence>
+                      {/* Desktop tag sidebar */}
+                      {isDesktop() && (
+                        <AnimatePresence>
+                          {showTags && (
+                            <motion.aside
+                              key="tag-sidebar"
+                              className="flex shrink-0 flex-col overflow-hidden border-l border-border"
+                              initial={{ width: 0, opacity: 0 }}
+                              animate={{ width: 300, opacity: 1 }}
+                              exit={{ width: 0, opacity: 0 }}
+                              transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
+                            >
+                              <div className="w-[300px] flex-1 overflow-y-auto p-5">
+                                <TagManager />
+                              </div>
+                            </motion.aside>
+                          )}
+                        </AnimatePresence>
+                      )}
                     </div>
                   </div>
 
+                  {/* Detail panel */}
                   <AnimatePresence>
                     {editingId && (
                       <motion.div
@@ -550,22 +592,35 @@ function App() {
                     )}
                   </AnimatePresence>
                   <AnimatePresence>
-                    {editingId && (
-                      <motion.div
-                        key="detail-panel"
-                        className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
-                        initial={{ x: "100%", opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        exit={{ x: "100%", opacity: 0 }}
-                        transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
-                      >
-                        <TodoDetail />
-                      </motion.div>
-                    )}
+                    {editingId &&
+                      (mobile ? (
+                        <motion.div
+                          key="detail-panel"
+                          className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+                          initial={{ y: "100%" }}
+                          animate={{ y: 0 }}
+                          exit={{ y: "100%" }}
+                          transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+                        >
+                          <TodoDetail />
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="detail-panel"
+                          className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
+                          initial={{ x: "100%", opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          exit={{ x: "100%", opacity: 0 }}
+                          transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
+                        >
+                          <TodoDetail />
+                        </motion.div>
+                      ))}
                   </AnimatePresence>
 
                   <EventPanelOverlay />
 
+                  {/* Settings panel */}
                   <AnimatePresence>
                     {showSettings && (
                       <motion.div
@@ -580,33 +635,112 @@ function App() {
                     )}
                   </AnimatePresence>
                   <AnimatePresence>
-                    {showSettings && (
-                      <motion.div
-                        key="settings-panel"
-                        className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
-                        initial={{ x: "100%", opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        exit={{ x: "100%", opacity: 0 }}
-                        transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
-                      >
-                        <div className="flex h-full flex-col overflow-hidden">
-                          <div className="flex items-center justify-between border-b border-border px-5 py-3">
-                            <h2 className="text-[16px] font-bold">{t("settings.title", locale)}</h2>
-                            <button
-                              type="button"
-                              onClick={() => setShowSettings(false)}
-                              className="p-1.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
-                            >
-                              ✕
-                            </button>
+                    {showSettings &&
+                      (mobile ? (
+                        <motion.div
+                          key="settings-panel"
+                          className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+                          initial={{ y: "100%" }}
+                          animate={{ y: 0 }}
+                          exit={{ y: "100%" }}
+                          transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+                        >
+                          <div className="flex h-full flex-col overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+                              <h2 className="text-[16px] font-bold">
+                                {t("settings.title", locale)}
+                              </h2>
+                              <button
+                                type="button"
+                                onClick={() => setShowSettings(false)}
+                                className="p-2.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                              >
+                                <X size={18} />
+                              </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-5">
+                              <SettingsPanel />
+                            </div>
                           </div>
-                          <div className="flex-1 overflow-y-auto p-5">
-                            <SettingsPanel />
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="settings-panel"
+                          className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
+                          initial={{ x: "100%", opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          exit={{ x: "100%", opacity: 0 }}
+                          transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
+                        >
+                          <div className="flex h-full flex-col overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+                              <h2 className="text-[16px] font-bold">
+                                {t("settings.title", locale)}
+                              </h2>
+                              <button
+                                type="button"
+                                onClick={() => setShowSettings(false)}
+                                className="p-1.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-5">
+                              <SettingsPanel />
+                            </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    )}
+                        </motion.div>
+                      ))}
                   </AnimatePresence>
+
+                  {/* Mobile tag manager sheet */}
+                  {mobile && (
+                    <>
+                      <AnimatePresence>
+                        {showTags && (
+                          <motion.div
+                            key="tags-backdrop"
+                            className="absolute inset-0 z-40 bg-black/30"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            onClick={() => setShowTags(false)}
+                          />
+                        )}
+                      </AnimatePresence>
+                      <AnimatePresence>
+                        {showTags && (
+                          <motion.div
+                            key="tags-panel"
+                            className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+                            initial={{ y: "100%" }}
+                            animate={{ y: 0 }}
+                            exit={{ y: "100%" }}
+                            transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+                          >
+                            <div className="flex h-full flex-col overflow-hidden">
+                              <div className="flex items-center justify-between border-b border-border px-5 py-3">
+                                <h2 className="text-[16px] font-bold">
+                                  {t("tags.title", locale)}
+                                </h2>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowTags(false)}
+                                  className="p-2.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                                >
+                                  <X size={18} />
+                                </button>
+                              </div>
+                              <div className="flex-1 overflow-y-auto p-5">
+                                <TagManager />
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </>
+                  )}
                 </div>
               )}
             </motion.div>
@@ -638,18 +772,30 @@ function EventPanelOverlay() {
         />
       )}
       <AnimatePresence>
-        {eventViewTodoId && (
-          <motion.div
-            key="event-panel"
-            className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
-            initial={{ x: "100%", opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: "100%", opacity: 0 }}
-            transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
-          >
-            <EventPanel />
-          </motion.div>
-        )}
+        {eventViewTodoId &&
+          (mobile ? (
+            <motion.div
+              key="event-panel"
+              className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+            >
+              <EventPanel />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="event-panel"
+              className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
+              initial={{ x: "100%", opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: "100%", opacity: 0 }}
+              transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
+            >
+              <EventPanel />
+            </motion.div>
+          ))}
       </AnimatePresence>
     </>
   );

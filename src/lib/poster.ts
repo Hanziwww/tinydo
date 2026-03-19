@@ -1,6 +1,7 @@
 import { toPng } from "html-to-image";
 import { save } from "@tauri-apps/plugin-dialog";
 import * as backend from "@/lib/backend";
+import { isMobile } from "@/lib/platform";
 
 const TARGET_DPI = 360;
 const PIXEL_RATIO = TARGET_DPI / 96;
@@ -18,16 +19,21 @@ export async function exportPoster(element: HTMLElement, defaultName: string) {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     const dataUrl = await toPng(clone, { pixelRatio: PIXEL_RATIO });
-
-    const filePath = await save({
-      defaultPath: defaultName,
-      filters: [{ name: "PNG", extensions: ["png"] }],
-    });
-
-    if (!filePath) return;
-
     const base64 = dataUrl.split(",")[1];
-    await backend.savePoster(filePath, base64, TARGET_DPI);
+
+    if (isMobile()) {
+      const filePath = `tinydo-poster-${Date.now()}.png`;
+      await backend.savePoster(filePath, base64, TARGET_DPI);
+    } else {
+      const filePath = await save({
+        defaultPath: defaultName,
+        filters: [{ name: "PNG", extensions: ["png"] }],
+      });
+
+      if (!filePath) return;
+
+      await backend.savePoster(filePath, base64, TARGET_DPI);
+    }
   } finally {
     document.body.removeChild(clone);
   }

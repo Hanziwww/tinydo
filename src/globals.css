@@ -31,6 +31,10 @@
   --t2: #4b5563;
   --t3: #9ca3af;
   --acc-soft: rgba(99, 102, 241, 0.1);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
 }
 
 .dark {
@@ -336,4 +340,28 @@ textarea {
 
 .subtask-expand {
   transition: grid-template-rows 0.2s ease-out;
+}
+
+.mobile-safe-top {
+  padding-top: var(--safe-area-top);
+}
+.mobile-safe-bottom {
+  padding-bottom: var(--safe-area-bottom);
+}
+
+@keyframes sheetUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes sheetDown {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
 }

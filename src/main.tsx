@@ -3,11 +3,14 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./globals.css";
 import { useSettingsStore } from "./stores/settingsStore";
+import { isDesktop } from "./lib/platform";
 
 const theme = useSettingsStore.getState().theme;
 document.documentElement.classList.toggle("dark", theme === "dark");
 
-document.addEventListener("contextmenu", (e) => e.preventDefault());
+if (isDesktop()) {
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+}
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

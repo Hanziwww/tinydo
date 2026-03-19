@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { isEnabled, enable, disable } from "@tauri-apps/plugin-autostart";
 import { t } from "@/i18n";
+import { isDesktop } from "@/lib/platform";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { exportAllData, importAllData } from "@/lib/export";
 import { parseError } from "@/lib/backend";
@@ -17,13 +17,18 @@ export function SettingsPanel() {
   const [autostart, setAutostart] = useState(false);
 
   useEffect(() => {
-    isEnabled()
-      .then(setAutostart)
-      .catch(() => setAutostart(false));
+    if (!isDesktop()) return;
+    import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
+      isEnabled()
+        .then(setAutostart)
+        .catch(() => setAutostart(false));
+    });
   }, []);
 
   const toggleAutostart = async () => {
+    if (!isDesktop()) return;
     try {
+      const { enable, disable } = await import("@tauri-apps/plugin-autostart");
       if (autostart) {
         await disable();
         setAutostart(false);
@@ -235,117 +240,123 @@ export function SettingsPanel() {
           ))}
         </select>
       </div>
-      <div>
-        <label className="mb-2.5 block text-[15px] font-medium text-text-2">
-          {t("settings.mini", locale)}
-        </label>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[15px] text-text-2">
-              {t("settings.mini.always_on_top", locale)}
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={miniAlwaysOnTop}
-              onClick={() =>
-                useSettingsStore
-                  .getState()
-                  .setMiniAlwaysOnTop(!useSettingsStore.getState().miniAlwaysOnTop)
-              }
-              className={cn(
-                "relative inline-flex h-7 w-12 items-center border transition-colors",
-                miniAlwaysOnTop ? "border-accent bg-accent" : "border-border bg-surface-2",
+      {isDesktop() && (
+        <>
+          <div>
+            <label className="mb-2.5 block text-[15px] font-medium text-text-2">
+              {t("settings.mini", locale)}
+            </label>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[15px] text-text-2">
+                  {t("settings.mini.always_on_top", locale)}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={miniAlwaysOnTop}
+                  onClick={() =>
+                    useSettingsStore
+                      .getState()
+                      .setMiniAlwaysOnTop(!useSettingsStore.getState().miniAlwaysOnTop)
+                  }
+                  className={cn(
+                    "relative inline-flex h-7 w-12 items-center border transition-colors",
+                    miniAlwaysOnTop ? "border-accent bg-accent" : "border-border bg-surface-2",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-5 w-5 bg-white shadow transition-transform",
+                      miniAlwaysOnTop ? "translate-x-6" : "translate-x-0.5",
+                    )}
+                  />
+                </button>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[15px] text-text-2">
+                  {t("settings.mini.fade_on_blur", locale)}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={miniFadeOnBlur}
+                  onClick={() =>
+                    useSettingsStore
+                      .getState()
+                      .setMiniFadeOnBlur(!useSettingsStore.getState().miniFadeOnBlur)
+                  }
+                  className={cn(
+                    "relative inline-flex h-7 w-12 items-center border transition-colors",
+                    miniFadeOnBlur ? "border-accent bg-accent" : "border-border bg-surface-2",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-5 w-5 bg-white shadow transition-transform",
+                      miniFadeOnBlur ? "translate-x-6" : "translate-x-0.5",
+                    )}
+                  />
+                </button>
+              </div>
+              {miniFadeOnBlur && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[15px] text-text-2">
+                    {t("settings.mini.fade_opacity", locale)}
+                  </span>
+                  <input
+                    type="range"
+                    min="10"
+                    max="90"
+                    step="5"
+                    value={Math.round(miniFadeOpacity * 100)}
+                    onChange={(e) =>
+                      useSettingsStore.getState().setMiniFadeOpacity(Number(e.target.value) / 100)
+                    }
+                    className="w-24"
+                  />
+                  <span className="w-10 text-right text-[14px] text-text-3">
+                    {Math.round(miniFadeOpacity * 100)}%
+                  </span>
+                </div>
               )}
-            >
-              <span
-                className={cn(
-                  "inline-block h-5 w-5 bg-white shadow transition-transform",
-                  miniAlwaysOnTop ? "translate-x-6" : "translate-x-0.5",
-                )}
-              />
-            </button>
+            </div>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[15px] text-text-2">
-              {t("settings.mini.fade_on_blur", locale)}
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={miniFadeOnBlur}
-              onClick={() =>
-                useSettingsStore
-                  .getState()
-                  .setMiniFadeOnBlur(!useSettingsStore.getState().miniFadeOnBlur)
-              }
-              className={cn(
-                "relative inline-flex h-7 w-12 items-center border transition-colors",
-                miniFadeOnBlur ? "border-accent bg-accent" : "border-border bg-surface-2",
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-block h-5 w-5 bg-white shadow transition-transform",
-                  miniFadeOnBlur ? "translate-x-6" : "translate-x-0.5",
-                )}
-              />
-            </button>
-          </div>
-          {miniFadeOnBlur && (
+          <div>
+            <label className="mb-2.5 block text-[15px] font-medium text-text-2">
+              {t("settings.autostart", locale)}
+            </label>
             <div className="flex items-center justify-between">
               <span className="text-[15px] text-text-2">
-                {t("settings.mini.fade_opacity", locale)}
+                {t("settings.autostart.desc", locale)}
               </span>
-              <input
-                type="range"
-                min="10"
-                max="90"
-                step="5"
-                value={Math.round(miniFadeOpacity * 100)}
-                onChange={(e) =>
-                  useSettingsStore.getState().setMiniFadeOpacity(Number(e.target.value) / 100)
-                }
-                className="w-24"
-              />
-              <span className="w-10 text-right text-[14px] text-text-3">
-                {Math.round(miniFadeOpacity * 100)}%
-              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autostart}
+                onClick={() => void toggleAutostart()}
+                className={cn(
+                  "relative inline-flex h-7 w-12 items-center border transition-colors",
+                  autostart ? "border-accent bg-accent" : "border-border bg-surface-2",
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-5 w-5 bg-white shadow transition-transform",
+                    autostart ? "translate-x-6" : "translate-x-0.5",
+                  )}
+                />
+              </button>
             </div>
-          )}
-        </div>
-      </div>
-      <div>
-        <label className="mb-2.5 block text-[15px] font-medium text-text-2">
-          {t("settings.autostart", locale)}
-        </label>
-        <div className="flex items-center justify-between">
-          <span className="text-[15px] text-text-2">{t("settings.autostart.desc", locale)}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autostart}
-            onClick={() => void toggleAutostart()}
-            className={cn(
-              "relative inline-flex h-7 w-12 items-center border transition-colors",
-              autostart ? "border-accent bg-accent" : "border-border bg-surface-2",
-            )}
-          >
-            <span
-              className={cn(
-                "inline-block h-5 w-5 bg-white shadow transition-transform",
-                autostart ? "translate-x-6" : "translate-x-0.5",
-              )}
-            />
-          </button>
-        </div>
-      </div>
-      <div>
-        <label className="mb-2.5 block text-[15px] font-medium text-text-2">
-          {t("settings.shortcut", locale)}
-        </label>
-        <p className="text-[15px] text-text-3">{t("settings.shortcut.desc", locale)}</p>
-      </div>
+          </div>
+          <div>
+            <label className="mb-2.5 block text-[15px] font-medium text-text-2">
+              {t("settings.shortcut", locale)}
+            </label>
+            <p className="text-[15px] text-text-3">{t("settings.shortcut.desc", locale)}</p>
+          </div>
+        </>
+      )}
       <div>
         <label className="mb-2.5 block text-[15px] font-medium text-text-2">
           {t("settings.event_debounce", locale)}

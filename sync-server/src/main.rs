@@ -32,12 +32,18 @@ fn get_local_ip() -> String {
 }
 
 fn get_public_ip() -> String {
-    std::net::TcpStream::connect_timeout(
-        &"api4.ipify.org:80".parse().unwrap(),
-        std::time::Duration::from_secs(3),
-    )
-    .ok()
-    .and_then(|mut stream| {
+    use std::net::ToSocketAddrs;
+    let addr = match "api4.ipify.org:80"
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+    {
+        Some(a) => a,
+        None => return "unavailable".into(),
+    };
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(3))
+        .ok()
+        .and_then(|mut stream| {
         use std::io::{Read, Write};
         stream
             .write_all(b"GET / HTTP/1.1\r\nHost: api4.ipify.org\r\nConnection: close\r\n\r\n")

@@ -8,12 +8,16 @@ pub mod sync;
 
 use std::sync::Mutex;
 
+#[cfg(desktop)]
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Emitter, Manager,
+    Emitter,
 };
+use tauri::Manager;
+#[cfg(desktop)]
 use tauri_plugin_autostart::MacosLauncher;
+#[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -22,7 +26,8 @@ use reminders::ReminderState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -32,12 +37,19 @@ pub fn run() {
                     Target::new(TargetKind::LogDir { file_name: None }),
                 ])
                 .build(),
-        )
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            Some(vec!["--autostarted"]),
-        ))
+        );
+
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+            .plugin(tauri_plugin_autostart::init(
+                MacosLauncher::LaunchAgent,
+                Some(vec!["--autostarted"]),
+            ));
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::todos::get_todos,
             commands::todos::save_todo,
@@ -75,7 +87,6 @@ pub fn run() {
             sync::sync_resolve_conflict,
         ])
         .setup(|app| {
-            // ── Initialize SQLite ──────────────────────────────────────
             let app_data_dir = app
                 .path()
                 .app_data_dir()
@@ -85,42 +96,42 @@ pub fn run() {
             app.manage(DbState(Mutex::new(conn)));
             app.manage(ReminderState::new());
 
-            // ── System tray ────────────────────────────────────────────
-            let show = MenuItemBuilder::with_id("show", "显示 TinyDo").build(app)?;
-            let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+            #[cfg(desktop)]
+            {
+                let show = MenuItemBuilder::with_id("show", "显示 TinyDo").build(app)?;
+                let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+                let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("TinyDo")
-                .menu(&menu)
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "show" => show_main_window(app),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click {
-                        button: tauri::tray::MouseButton::Left,
-                        ..
-                    } = event
-                    {
-                        show_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)?;
+                TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .tooltip("TinyDo")
+                    .menu(&menu)
+                    .on_menu_event(move |app, event| match event.id().as_ref() {
+                        "show" => show_main_window(app),
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let tauri::tray::TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            ..
+                        } = event
+                        {
+                            show_main_window(tray.app_handle());
+                        }
+                    })
+                    .build(app)?;
 
-            // ── Global shortcut: Ctrl+Shift+T to toggle window ────────
-            let shortcut: Shortcut = "ctrl+shift+t".parse().unwrap();
-            let app_handle = app.handle().clone();
-            app.global_shortcut()
-                .on_shortcut(shortcut, move |_app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        toggle_main_window(&app_handle);
-                    }
-                })?;
+                let shortcut: Shortcut = "ctrl+shift+t".parse().unwrap();
+                let app_handle = app.handle().clone();
+                app.global_shortcut()
+                    .on_shortcut(shortcut, move |_app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            toggle_main_window(&app_handle);
+                        }
+                    })?;
+            }
 
-            // ── Schedule reminders from DB ─────────────────────────────
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 reminders::reschedule_all(&handle);
@@ -129,17 +140,23 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            #[cfg(desktop)]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if let Err(e) = window.hide() {
                     log::error!("Failed to hide window: {}", e);
                 }
                 api.prevent_close();
             }
+            #[cfg(mobile)]
+            {
+                let _ = (window, event);
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
+#[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         if let Err(e) = w.show() {
@@ -155,6 +172,7 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(desktop)]
 fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let visible = w.is_visible().unwrap_or(false);

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { Archive, CheckSquare, ImageDown, Trash2, X } from "lucide-react";
 import { t } from "@/i18n";
+import { isMobile } from "@/lib/platform";
 import { isTodoCompletedForDate, isTodoVisibleOnBoard } from "@/lib/todo-helpers";
 import {
   cn,
@@ -97,7 +98,7 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 border-t border-border px-6 py-2">
+      <div className={cn("flex flex-wrap items-center gap-3 border-t border-border py-2", isMobile() ? "px-4" : "px-6")}>
         <span className="min-w-[180px] flex-1 text-[13px] text-text-2">
           {t("status.active", locale, { n: activeN })}
           {doneN > 0 && ` · ${t("status.completed", locale, { n: doneN })}`}
