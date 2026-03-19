@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import * as backend from "@/lib/backend";
 import type { ConflictEntry, SyncResult } from "@/lib/backend";
+import { initBackendData, settingsToStore } from "@/lib/init";
+import { flushAllPending } from "@/stores/eventStore";
+import { usePredictStore } from "@/stores/predictStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useTagStore } from "@/stores/tagStore";
+import { useTodoStore } from "@/stores/todoStore";
 
 type SyncState = "idle" | "syncing" | "done" | "error";
 
@@ -26,6 +32,14 @@ interface SyncStoreState {
   triggerSync: () => Promise<SyncResult | null>;
   resolveConflict: (conflict: ConflictEntry, keep: "local" | "remote") => Promise<void>;
   dismissConflicts: () => void;
+}
+
+async function rehydrateStoresFromBackend() {
+  const data = await initBackendData();
+  useTodoStore.getState()._hydrate(data.todos, data.archivedTodos);
+  useTagStore.getState()._hydrate(data.tags, data.tagGroups);
+  useSettingsStore.getState()._hydrate(settingsToStore(data.settings));
+  await usePredictStore.getState().refreshPredictions();
 }
 
 export const useSyncStore = create<SyncStoreState>()((set, get) => ({
@@ -110,7 +124,9 @@ export const useSyncStore = create<SyncStoreState>()((set, get) => ({
 
     set({ syncState: "syncing", syncError: null });
     try {
+      await flushAllPending();
       const result = await backend.syncFull();
+      await rehydrateStoresFromBackend();
       set({
         syncState: "done",
         lastSyncVersion: result.newVersion,
@@ -144,11 +160,14 @@ export const useSyncStore = create<SyncStoreState>()((set, get) => ({
       {
         entityType: conflict.entityType,
         entityId: conflict.entityId,
+        localAction: conflict.localAction,
+        remoteAction: conflict.remoteAction,
         keep,
       },
       conflict.remoteData,
       conflict.localData,
     );
+    await rehydrateStoresFromBackend();
 
     const remaining = get().conflicts.filter(
       (c) => !(c.entityType === conflict.entityType && c.entityId === conflict.entityId),

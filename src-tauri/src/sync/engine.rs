@@ -12,12 +12,12 @@ pub fn get_sync_meta(conn: &Connection, key: &str) -> Option<String> {
     .ok()
 }
 
-pub fn set_sync_meta(conn: &Connection, key: &str, value: &str) {
+pub fn set_sync_meta(conn: &Connection, key: &str, value: &str) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR REPLACE INTO sync_state (key, value) VALUES (?1, ?2)",
         params![key, value],
-    )
-    .ok();
+    )?;
+    Ok(())
 }
 
 pub fn get_unsynced_changes(conn: &Connection) -> Result<Vec<LocalChange>, AppError> {
@@ -44,19 +44,94 @@ pub fn get_unsynced_changes(conn: &Connection) -> Result<Vec<LocalChange>, AppEr
 }
 
 pub fn mark_changes_synced(conn: &Connection, ids: &[i64]) -> Result<(), AppError> {
-    let tx = conn.unchecked_transaction()?;
     for id in ids {
-        tx.execute(
+        conn.execute(
             "UPDATE local_changes SET synced = 1 WHERE id = ?1",
             params![id],
         )?;
     }
-    tx.commit()?;
     Ok(())
 }
 
 pub fn clear_synced_changes(conn: &Connection) -> Result<(), AppError> {
     conn.execute("DELETE FROM local_changes WHERE synced = 1", [])?;
+    Ok(())
+}
+
+pub fn clear_unsynced_changes_for_entity(
+    conn: &Connection,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "DELETE FROM local_changes WHERE entity_type = ?1 AND entity_id = ?2 AND synced = 0",
+        params![entity_type, entity_id],
+    )?;
+    Ok(())
+}
+
+/// Record all existing entities as local changes so they get pushed on first sync.
+pub fn seed_all_local_changes(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM local_changes", [])?;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let mut stmt = conn.prepare("SELECT id, data, archived FROM todos")?;
+    let todos: Vec<(String, String, bool)> = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, i32>(2)? != 0))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    for (id, data, archived) in &todos {
+        let entity_type = if *archived { "archived_todo" } else { "todo" };
+        conn.execute(
+            "INSERT INTO local_changes (entity_type, entity_id, action, data, timestamp, synced) VALUES (?1, ?2, 'upsert', ?3, ?4, 0)",
+            params![entity_type, id, data, timestamp],
+        )?;
+    }
+
+    let mut stmt = conn.prepare("SELECT id, data FROM tags")?;
+    let tags: Vec<(String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    for (id, data) in &tags {
+        conn.execute(
+            "INSERT INTO local_changes (entity_type, entity_id, action, data, timestamp, synced) VALUES ('tag', ?1, 'upsert', ?2, ?3, 0)",
+            params![id, data, timestamp],
+        )?;
+    }
+
+    let mut stmt = conn.prepare("SELECT id, data FROM tag_groups")?;
+    let groups: Vec<(String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    for (id, data) in &groups {
+        conn.execute(
+            "INSERT INTO local_changes (entity_type, entity_id, action, data, timestamp, synced) VALUES ('tag_group', ?1, 'upsert', ?2, ?3, 0)",
+            params![id, data, timestamp],
+        )?;
+    }
+
+    let settings: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'app_settings'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(data) = &settings {
+        conn.execute(
+            "INSERT INTO local_changes (entity_type, entity_id, action, data, timestamp, synced) VALUES ('settings', 'app_settings', 'upsert', ?1, ?2, 0)",
+            params![data, timestamp],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -163,24 +238,39 @@ pub fn resolve_conflict(
     remote_data: &str,
     local_data: &str,
 ) -> Result<(), AppError> {
-    let data = if resolution.keep == "remote" {
-        remote_data
-    } else {
-        local_data
+    let (action, data, requeue_local) = match resolution.keep.as_str() {
+        "remote" => (&resolution.remote_action, remote_data, false),
+        "local" => (&resolution.local_action, local_data, true),
+        other => {
+            return Err(AppError::custom(format!(
+                "Unsupported conflict resolution strategy: {other}"
+            )))
+        }
     };
 
     apply_remote_entity(
         conn,
         &resolution.entity_type,
         &resolution.entity_id,
-        "upsert",
+        action,
         data,
     )?;
+    clear_unsynced_changes_for_entity(conn, &resolution.entity_type, &resolution.entity_id)?;
 
-    conn.execute(
-        "DELETE FROM local_changes WHERE entity_type = ?1 AND entity_id = ?2 AND synced = 0",
-        params![resolution.entity_type, resolution.entity_id],
-    )?;
+    if requeue_local {
+        let next_data = if resolution.local_action == "delete" {
+            None
+        } else {
+            Some(local_data)
+        };
+        record_local_change(
+            conn,
+            &resolution.entity_type,
+            &resolution.entity_id,
+            &resolution.local_action,
+            next_data,
+        )?;
+    }
 
     Ok(())
 }
@@ -212,9 +302,9 @@ mod tests {
     fn sync_meta_roundtrip() {
         let conn = test_conn();
         assert!(get_sync_meta(&conn, "foo").is_none());
-        set_sync_meta(&conn, "foo", "bar");
+        set_sync_meta(&conn, "foo", "bar").unwrap();
         assert_eq!(get_sync_meta(&conn, "foo").unwrap(), "bar");
-        set_sync_meta(&conn, "foo", "baz");
+        set_sync_meta(&conn, "foo", "baz").unwrap();
         assert_eq!(get_sync_meta(&conn, "foo").unwrap(), "baz");
     }
 
@@ -340,6 +430,8 @@ mod tests {
         let resolution = ConflictResolution {
             entity_type: "todo".into(),
             entity_id: "t1".into(),
+            local_action: "upsert".into(),
+            remote_action: "upsert".into(),
             keep: "local".into(),
         };
 
@@ -359,7 +451,8 @@ mod tests {
         assert!(data.contains("Local"));
 
         let unsynced = get_unsynced_changes(&conn).unwrap();
-        assert!(unsynced.is_empty());
+        assert_eq!(unsynced.len(), 1);
+        assert_eq!(unsynced[0].action, "upsert");
     }
 
     #[test]
@@ -377,6 +470,8 @@ mod tests {
         let resolution = ConflictResolution {
             entity_type: "todo".into(),
             entity_id: "t1".into(),
+            local_action: "upsert".into(),
+            remote_action: "upsert".into(),
             keep: "remote".into(),
         };
 
@@ -394,5 +489,40 @@ mod tests {
             })
             .unwrap();
         assert!(data.contains("Remote"));
+
+        let unsynced = get_unsynced_changes(&conn).unwrap();
+        assert!(unsynced.is_empty());
+    }
+
+    #[test]
+    fn resolve_conflict_keeps_local_delete() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO todos (id, data, archived) VALUES ('t1', '{\"id\":\"t1\"}', 0)",
+            [],
+        )
+        .unwrap();
+        record_local_change(&conn, "todo", "t1", "delete", None).unwrap();
+
+        let resolution = ConflictResolution {
+            entity_type: "todo".into(),
+            entity_id: "t1".into(),
+            local_action: "delete".into(),
+            remote_action: "upsert".into(),
+            keep: "local".into(),
+        };
+
+        resolve_conflict(&conn, &resolution, r#"{"id":"t1","title":"Remote"}"#, "").unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM todos WHERE id = 't1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let unsynced = get_unsynced_changes(&conn).unwrap();
+        assert_eq!(unsynced.len(), 1);
+        assert_eq!(unsynced[0].action, "delete");
     }
 }

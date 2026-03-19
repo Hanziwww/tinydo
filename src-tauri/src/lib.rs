@@ -8,13 +8,13 @@ pub mod sync;
 
 use std::sync::Mutex;
 
+use tauri::Manager;
 #[cfg(desktop)]
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
     Emitter,
 };
-use tauri::Manager;
 #[cfg(desktop)]
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(desktop)]

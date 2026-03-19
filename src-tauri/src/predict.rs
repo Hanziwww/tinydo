@@ -1298,7 +1298,7 @@ mod tests {
         ];
 
         let results = predict_all(
-            &[target.clone()],
+            std::slice::from_ref(&target),
             &history,
             &events,
             &settings(),

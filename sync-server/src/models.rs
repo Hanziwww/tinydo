@@ -14,6 +14,8 @@ pub struct RegisterResponse {
     pub sync_key: String,
     pub device_id: String,
     pub version: i64,
+    pub head_version: i64,
+    pub min_available_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +62,8 @@ pub struct StoredChange {
 pub struct PullChangesResponse {
     pub changes: Vec<StoredChange>,
     pub current_version: i64,
+    pub head_version: i64,
+    pub min_available_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +97,7 @@ pub struct DeviceInfo {
 pub struct StatusResponse {
     pub sync_key: String,
     pub current_version: i64,
+    pub min_available_version: i64,
     pub devices: Vec<DeviceInfo>,
 }
 

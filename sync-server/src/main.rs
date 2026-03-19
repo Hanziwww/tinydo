@@ -44,18 +44,18 @@ fn get_public_ip() -> String {
     std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(3))
         .ok()
         .and_then(|mut stream| {
-        use std::io::{Read, Write};
-        stream
-            .write_all(b"GET / HTTP/1.1\r\nHost: api4.ipify.org\r\nConnection: close\r\n\r\n")
-            .ok()?;
-        let mut buf = String::new();
-        stream.read_to_string(&mut buf).ok()?;
-        buf.rsplit("\r\n\r\n")
-            .next()
-            .map(|body| body.trim().to_string())
-    })
-    .filter(|ip| !ip.is_empty())
-    .unwrap_or_else(|| "unavailable".into())
+            use std::io::{Read, Write};
+            stream
+                .write_all(b"GET / HTTP/1.1\r\nHost: api4.ipify.org\r\nConnection: close\r\n\r\n")
+                .ok()?;
+            let mut buf = String::new();
+            stream.read_to_string(&mut buf).ok()?;
+            buf.rsplit("\r\n\r\n")
+                .next()
+                .map(|body| body.trim().to_string())
+        })
+        .filter(|ip| !ip.is_empty())
+        .unwrap_or_else(|| "unavailable".into())
 }
 
 #[tokio::main]

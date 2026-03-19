@@ -50,10 +50,13 @@ pub struct RemoteChange {
 pub struct ConflictEntry {
     pub entity_type: String,
     pub entity_id: String,
+    pub local_action: String,
+    pub remote_action: String,
     pub local_data: String,
     pub remote_data: String,
     pub local_timestamp: i64,
     pub remote_timestamp: i64,
+    pub remote_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +64,8 @@ pub struct ConflictEntry {
 pub struct ConflictResolution {
     pub entity_type: String,
     pub entity_id: String,
+    pub local_action: String,
+    pub remote_action: String,
     pub keep: String, // "local" or "remote"
 }
 
@@ -96,6 +101,8 @@ pub struct RegisterResponse {
     pub sync_key: String,
     pub device_id: String,
     pub version: i64,
+    pub head_version: i64,
+    pub min_available_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +135,8 @@ pub struct PushChangesResponse {
 pub struct PullChangesResponse {
     pub changes: Vec<RemoteChange>,
     pub current_version: i64,
+    pub head_version: i64,
+    pub min_available_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,5 +170,6 @@ pub struct DeviceInfo {
 pub struct StatusResponse {
     pub sync_key: String,
     pub current_version: i64,
+    pub min_available_version: i64,
     pub devices: Vec<DeviceInfo>,
 }

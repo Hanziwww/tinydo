@@ -188,10 +188,13 @@ export interface SyncStatus {
 export interface ConflictEntry {
   entityType: string;
   entityId: string;
+  localAction: string;
+  remoteAction: string;
   localData: string;
   remoteData: string;
   localTimestamp: number;
   remoteTimestamp: number;
+  remoteVersion: number;
 }
 
 export interface SyncResult {
@@ -204,6 +207,8 @@ export interface SyncResult {
 export interface ConflictResolution {
   entityType: string;
   entityId: string;
+  localAction: string;
+  remoteAction: string;
   keep: "local" | "remote";
 }
 

@@ -18,7 +18,7 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (!isDesktop()) return;
-    import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
+    void import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
       isEnabled()
         .then(setAutostart)
         .catch(() => setAutostart(false));

@@ -45,6 +45,13 @@ export function ConflictDialog() {
     }
   };
 
+  const formatConflictValue = (action: string, data: string) => {
+    if (action === "delete") {
+      return "删除该项";
+    }
+    return tryParseTitle(data) || data.slice(0, 80) || "空内容";
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="mx-4 w-full max-w-lg border border-border bg-surface-1 shadow-xl">
@@ -66,9 +73,6 @@ export function ConflictDialog() {
 
           <div className="max-h-[400px] space-y-3 overflow-y-auto">
             {conflicts.map((conflict, i) => {
-              const localTitle = tryParseTitle(conflict.localData);
-              const remoteTitle = tryParseTitle(conflict.remoteData);
-
               return (
                 <div
                   key={`${conflict.entityType}-${conflict.entityId}`}
@@ -84,7 +88,7 @@ export function ConflictDialog() {
                         {t("sync.conflict.local", locale)}
                       </p>
                       <p className="line-clamp-2 text-[13px] text-text-2">
-                        {localTitle || conflict.localData.slice(0, 80)}
+                        {formatConflictValue(conflict.localAction, conflict.localData)}
                       </p>
                       <p className="mt-1 text-[11px] text-text-3">
                         {new Date(conflict.localTimestamp * 1000).toLocaleString()}
@@ -95,7 +99,7 @@ export function ConflictDialog() {
                         {t("sync.conflict.remote", locale)}
                       </p>
                       <p className="line-clamp-2 text-[13px] text-text-2">
-                        {remoteTitle || conflict.remoteData.slice(0, 80)}
+                        {formatConflictValue(conflict.remoteAction, conflict.remoteData)}
                       </p>
                       <p className="mt-1 text-[11px] text-text-3">
                         {new Date(conflict.remoteTimestamp * 1000).toLocaleString()}

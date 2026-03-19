@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Unplug, Copy, Key } from "lucide-react";
 import { t } from "@/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -25,21 +25,34 @@ export function SyncSettings() {
   const [inputUrl, setInputUrl] = useState(serverUrl || prevServerUrl || "");
   const [inputKey, setInputKey] = useState(prevSyncKey || "");
   const [connecting, setConnecting] = useState(false);
+  const prevFilled = useRef(false);
+
+  const showSyncResultNotice = (result: { pulled: number; pushed: number }) => {
+    const parts: string[] = [];
+    if (result.pulled > 0) parts.push(t("sync.pulled", locale, { n: result.pulled }));
+    if (result.pushed > 0) parts.push(t("sync.pushed", locale, { n: result.pushed }));
+    if (parts.length > 0) showSuccessNotice(parts.join(" · "));
+    else showSuccessNotice(t("sync.status.connected", locale));
+  };
 
   useEffect(() => {
-    if (!configured && prevServerUrl && !inputUrl) setInputUrl(prevServerUrl);
-  }, [configured, prevServerUrl, inputUrl]);
-
-  useEffect(() => {
-    if (!configured && prevSyncKey && !inputKey) setInputKey(prevSyncKey);
-  }, [configured, prevSyncKey, inputKey]);
+    if (!configured && prevServerUrl && !prevFilled.current) {
+      setInputUrl(prevServerUrl);
+      if (prevSyncKey) setInputKey(prevSyncKey);
+      prevFilled.current = true;
+    }
+  }, [configured, prevServerUrl, prevSyncKey]);
 
   const handleConnect = async () => {
     if (!inputUrl.trim() || !inputKey.trim()) return;
     setConnecting(true);
     try {
       await configure(inputUrl.trim(), inputKey.trim());
-      showSuccessNotice(t("sync.status.connected", locale));
+      const result = await triggerSync();
+      if (!result) {
+        throw new Error(useSyncStore.getState().syncError || t("sync.status.error", locale));
+      }
+      showSyncResultNotice(result);
     } catch (e) {
       showErrorNotice(parseError(e));
     } finally {
@@ -67,11 +80,7 @@ export function SyncSettings() {
   const handleSync = () => {
     void triggerSync().then((result) => {
       if (result) {
-        const parts: string[] = [];
-        if (result.pulled > 0) parts.push(t("sync.pulled", locale, { n: result.pulled }));
-        if (result.pushed > 0) parts.push(t("sync.pushed", locale, { n: result.pushed }));
-        if (parts.length > 0) showSuccessNotice(parts.join(" · "));
-        else showSuccessNotice(t("sync.status.done", locale));
+        showSyncResultNotice(result);
       }
     });
   };

@@ -3,6 +3,7 @@ use tauri::State;
 use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::models::TinyEvent;
+use crate::sync::engine::record_local_change;
 
 #[tauri::command]
 pub fn save_events(state: State<'_, DbState>, events: Vec<TinyEvent>) -> Result<(), AppError> {
@@ -14,6 +15,10 @@ pub fn save_events(state: State<'_, DbState>, events: Vec<TinyEvent>) -> Result<
         .lock()
         .map_err(|e| AppError::custom(e.to_string()))?;
     db::save_events(&conn, &events)?;
+    for event in &events {
+        let data = serde_json::to_string(event).ok();
+        let _ = record_local_change(&conn, "event", &event.id, "upsert", data.as_deref());
+    }
     Ok(())
 }
 

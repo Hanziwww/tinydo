@@ -30,6 +30,16 @@ fn db_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<ErrorResponse>) {
     )
 }
 
+fn invalid_device_err(device_id: &str) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(ErrorResponse {
+            code: "INVALID_DEVICE".into(),
+            message: format!("Device \"{device_id}\" is not registered for this sync group"),
+        }),
+    )
+}
+
 fn extract_sync_key(headers: &HeaderMap) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     headers
         .get("X-Sync-Key")
@@ -63,20 +73,23 @@ pub async fn register(
     db::ensure_sync_group(&conn, &req.sync_key);
     db::upsert_device(&conn, &req.device_id, &req.sync_key, &req.device_name);
 
-    let version = db::get_current_version(&conn, &req.sync_key);
+    let head_version = db::get_current_version(&conn, &req.sync_key);
+    let min_available_version = db::get_min_available_version(&conn, &req.sync_key);
 
     log::info!(
         "[REGISTER] device \"{}\" ({}) joined sync group \"{}\" at version {}",
         req.device_id,
         req.device_name,
         mask_key(&req.sync_key),
-        version
+        head_version
     );
 
     Json(RegisterResponse {
         sync_key: req.sync_key,
         device_id: req.device_id,
-        version,
+        version: head_version,
+        head_version,
+        min_available_version,
     })
 }
 
@@ -88,18 +101,22 @@ pub async fn push_changes(
     let sync_key = extract_sync_key(&headers)?;
     let conn = state.db.lock().unwrap();
 
-    db::touch_device(&conn, &req.device_id);
+    if !db::device_exists(&conn, &sync_key, &req.device_id) {
+        return Err(invalid_device_err(&req.device_id));
+    }
 
-    let start_version = db::get_current_version(&conn, &sync_key);
-    let mut current_version = start_version;
     let accepted = req.changes.len();
 
     let tx = conn.unchecked_transaction().map_err(db_err)?;
+    db::touch_device(&tx, &sync_key, &req.device_id);
+    let (start_version, end_version) = db::reserve_versions(&tx, &sync_key, accepted);
+    let received_at = db::now_unix();
+    let mut current_version = start_version;
     for change in &req.changes {
         current_version += 1;
         tx.execute(
-            "INSERT INTO change_log (sync_key, device_id, entity_type, entity_id, action, encrypted, nonce, version, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO change_log (sync_key, device_id, entity_type, entity_id, action, encrypted, nonce, version, timestamp, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 sync_key,
                 req.device_id,
@@ -110,6 +127,7 @@ pub async fn push_changes(
                 change.nonce,
                 current_version,
                 change.timestamp,
+                received_at,
             ],
         )
         .map_err(db_err)?;
@@ -121,12 +139,12 @@ pub async fn push_changes(
         req.device_id,
         accepted,
         start_version,
-        current_version,
+        end_version,
         mask_key(&sync_key)
     );
 
     Ok(Json(PushChangesResponse {
-        version: current_version,
+        version: end_version,
         accepted,
     }))
 }
@@ -144,6 +162,28 @@ pub async fn pull_changes(
     let sync_key = extract_sync_key(&headers)?;
     let conn = state.db.lock().unwrap();
     let since = query.since_version.unwrap_or(0);
+    let current_version = db::get_current_version(&conn, &sync_key);
+    let min_available_version = db::get_min_available_version(&conn, &sync_key);
+
+    if since < min_available_version {
+        log::warn!(
+            "[PULL] sync group \"{}\" requires snapshot for stale cursor {} (min available: {}, current: {})",
+            mask_key(&sync_key),
+            since,
+            min_available_version,
+            current_version
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                code: "SNAPSHOT_REQUIRED".into(),
+                message: format!(
+                    "Changes before version {} are no longer available; refresh from snapshot",
+                    min_available_version
+                ),
+            }),
+        ));
+    }
 
     let mut stmt = conn
         .prepare(
@@ -172,8 +212,6 @@ pub async fn pull_changes(
         .filter_map(|r| r.ok())
         .collect();
 
-    let current_version = db::get_current_version(&conn, &sync_key);
-
     log::info!(
         "[PULL] sync group \"{}\" returned {} changes since version {} (current: {})",
         mask_key(&sync_key),
@@ -185,6 +223,8 @@ pub async fn pull_changes(
     Ok(Json(PullChangesResponse {
         changes,
         current_version,
+        head_version: current_version,
+        min_available_version,
     }))
 }
 
@@ -196,14 +236,22 @@ pub async fn upload_snapshot(
     let sync_key = extract_sync_key(&headers)?;
     let conn = state.db.lock().unwrap();
 
-    db::touch_device(&conn, &req.device_id);
+    if !db::device_exists(&conn, &sync_key, &req.device_id) {
+        return Err(invalid_device_err(&req.device_id));
+    }
+    db::touch_device(&conn, &sync_key, &req.device_id);
 
-    let version = db::get_current_version(&conn, &sync_key) + 1;
+    let version = db::get_current_version(&conn, &sync_key);
     let now = db::now_unix();
 
     conn.execute(
         "INSERT INTO snapshots (sync_key, device_id, encrypted, nonce, version, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(sync_key, version)
+         DO UPDATE SET device_id = excluded.device_id,
+                       encrypted = excluded.encrypted,
+                       nonce = excluded.nonce,
+                       created_at = excluded.created_at",
         params![
             sync_key,
             req.device_id,
@@ -291,6 +339,7 @@ pub async fn status(
     let conn = state.db.lock().unwrap();
 
     let current_version = db::get_current_version(&conn, &sync_key);
+    let min_available_version = db::get_min_available_version(&conn, &sync_key);
 
     let mut stmt = conn
         .prepare("SELECT device_id, device_name, last_seen FROM devices WHERE sync_key = ?1")
@@ -318,6 +367,7 @@ pub async fn status(
     Ok(Json(StatusResponse {
         sync_key,
         current_version,
+        min_available_version,
         devices,
     }))
 }
@@ -350,7 +400,7 @@ pub async fn delete_device(
     let sync_key = extract_sync_key(&headers)?;
     let conn = state.db.lock().unwrap();
 
-    let removed = db::delete_device(&conn, &device_id);
+    let removed = db::delete_device(&conn, &sync_key, &device_id);
 
     if removed > 0 {
         log::info!(
@@ -367,4 +417,85 @@ pub async fn delete_device(
     }
 
     Ok(Json(serde_json::json!({ "removed": removed > 0 })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn test_state() -> Arc<AppState> {
+        Arc::new(AppState {
+            db: Mutex::new(crate::db::init_memory_db()),
+        })
+    }
+
+    fn sync_headers(sync_key: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Sync-Key", sync_key.parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn push_rejects_unregistered_device() {
+        let state = test_state();
+        {
+            let conn = state.db.lock().unwrap();
+            db::ensure_sync_group(&conn, "group-1");
+        }
+
+        let result = push_changes(
+            State(state),
+            sync_headers("group-1"),
+            Json(PushChangesRequest {
+                device_id: "device-1".into(),
+                changes: vec![ChangeEntry {
+                    entity_type: "todo".into(),
+                    entity_id: "todo-1".into(),
+                    action: "upsert".into(),
+                    encrypted: "enc".into(),
+                    nonce: "nonce".into(),
+                    timestamp: 1,
+                }],
+            }),
+        )
+        .await;
+
+        let Err((status, Json(body))) = result else {
+            panic!("expected invalid device error");
+        };
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body.code, "INVALID_DEVICE");
+    }
+
+    #[tokio::test]
+    async fn pull_requires_snapshot_for_stale_cursor() {
+        let state = test_state();
+        {
+            let conn = state.db.lock().unwrap();
+            db::ensure_sync_group(&conn, "group-1");
+            conn.execute(
+                "UPDATE sync_groups
+                 SET current_version = 7, min_available_version = 3
+                 WHERE sync_key = 'group-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        let result = pull_changes(
+            State(state),
+            sync_headers("group-1"),
+            Query(PullQuery {
+                since_version: Some(2),
+            }),
+        )
+        .await;
+
+        let Err((status, Json(body))) = result else {
+            panic!("expected snapshot required error");
+        };
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body.code, "SNAPSHOT_REQUIRED");
+    }
 }

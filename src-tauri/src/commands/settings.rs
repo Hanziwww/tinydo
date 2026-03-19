@@ -4,6 +4,7 @@ use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::models::{ensure_unique_ids, LegacyData, Settings};
 use crate::reminders;
+use crate::sync::engine::record_local_change;
 
 fn validate_legacy_data(data: &LegacyData) -> Result<(), AppError> {
     ensure_unique_ids(data.todos.iter().map(|todo| todo.id.as_str()), "任务 ID")?;
@@ -58,7 +59,10 @@ pub fn save_settings(state: State<'_, DbState>, settings: Settings) -> Result<()
         .0
         .lock()
         .map_err(|e| AppError::custom(e.to_string()))?;
-    db::save_settings(&conn, &settings)
+    db::save_settings(&conn, &settings)?;
+    let data = serde_json::to_string(&settings).ok();
+    let _ = record_local_change(&conn, "settings", "app_settings", "upsert", data.as_deref());
+    Ok(())
 }
 
 #[tauri::command]

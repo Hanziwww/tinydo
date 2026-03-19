@@ -20,12 +20,22 @@ pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), A
         .lock()
         .map_err(|e| AppError::custom(e.to_string()))?;
 
-    let todos = db::get_todos(&conn, false)?;
-    let archived_todos = db::get_todos(&conn, true)?;
-    let tags = db::get_tags(&conn)?;
-    let tag_groups = db::get_tag_groups(&conn)?;
-    let settings = db::get_settings(&conn)?;
-    let events = db::get_all_events(&conn)?;
+    let envelope = build_export_envelope(&conn)?;
+    let json = serde_json::to_string_pretty(&envelope)?;
+    std::fs::write(&file_path, json)?;
+    log::info!("Data exported to {}", file_path);
+    Ok(())
+}
+
+pub(crate) fn build_export_envelope(
+    conn: &rusqlite::Connection,
+) -> Result<ExportEnvelope, AppError> {
+    let todos = db::get_todos(conn, false)?;
+    let archived_todos = db::get_todos(conn, true)?;
+    let tags = db::get_tags(conn)?;
+    let tag_groups = db::get_tag_groups(conn)?;
+    let settings = db::get_settings(conn)?;
+    let events = db::get_all_events(conn)?;
 
     let envelope = ExportEnvelope {
         version: "3.0".into(),
@@ -37,11 +47,7 @@ pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), A
         settings,
         events,
     };
-
-    let json = serde_json::to_string_pretty(&envelope)?;
-    std::fs::write(&file_path, json)?;
-    log::info!("Data exported to {}", file_path);
-    Ok(())
+    Ok(envelope)
 }
 
 #[derive(Debug, Deserialize)]
@@ -556,7 +562,7 @@ fn merge_settings_patch(
     Ok(Some(settings))
 }
 
-fn import_json_to_db(
+pub(crate) fn import_json_to_db(
     conn: &rusqlite::Connection,
     json: &serde_json::Value,
 ) -> Result<ImportResult, AppError> {
