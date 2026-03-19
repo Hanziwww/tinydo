@@ -173,3 +173,72 @@ export function rescheduleReminders(): Promise<void> {
 export function cancelAllReminders(): Promise<void> {
   return invoke("cancel_all_reminders");
 }
+
+// ── Sync ──────────────────────────────────────────────────────────────
+
+export interface SyncStatus {
+  configured: boolean;
+  serverUrl: string;
+  deviceId: string;
+  lastSyncVersion: number;
+  lastSyncTime: number;
+  deviceCount: number;
+}
+
+export interface ConflictEntry {
+  entityType: string;
+  entityId: string;
+  localData: string;
+  remoteData: string;
+  localTimestamp: number;
+  remoteTimestamp: number;
+}
+
+export interface SyncResult {
+  pulled: number;
+  pushed: number;
+  conflicts: ConflictEntry[];
+  newVersion: number;
+}
+
+export interface ConflictResolution {
+  entityType: string;
+  entityId: string;
+  keep: "local" | "remote";
+}
+
+export function syncGenerateKey(): Promise<string> {
+  return invoke<string>("sync_generate_key");
+}
+
+export function syncConfigure(serverUrl: string, syncKey: string): Promise<SyncStatus> {
+  return invoke<SyncStatus>("sync_configure", { serverUrl, syncKey });
+}
+
+export function syncPush(): Promise<number> {
+  return invoke<number>("sync_push");
+}
+
+export function syncPull(): Promise<SyncResult> {
+  return invoke<SyncResult>("sync_pull");
+}
+
+export function syncFull(): Promise<SyncResult> {
+  return invoke<SyncResult>("sync_full");
+}
+
+export function syncGetStatus(): Promise<SyncStatus> {
+  return invoke<SyncStatus>("sync_get_status");
+}
+
+export function syncDisconnect(): Promise<void> {
+  return invoke("sync_disconnect");
+}
+
+export function syncResolveConflict(
+  resolution: ConflictResolution,
+  remoteData: string,
+  localData: string,
+): Promise<void> {
+  return invoke("sync_resolve_conflict", { resolution, remoteData, localData });
+}

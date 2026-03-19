@@ -49,6 +49,22 @@ pub fn init_db(db_path: &std::path::Path) -> Result<Connection, AppError> {
         );
         CREATE INDEX IF NOT EXISTS idx_events_todo ON events(todo_id);
         CREATE INDEX IF NOT EXISTS idx_events_ts   ON events(timestamp);
+
+        CREATE TABLE IF NOT EXISTS sync_state (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS local_changes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id   TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            data        TEXT,
+            timestamp   INTEGER NOT NULL,
+            synced      INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_local_changes_synced ON local_changes(synced);
         ",
     )?;
 

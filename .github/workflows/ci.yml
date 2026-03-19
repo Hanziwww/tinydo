@@ -8,16 +8,31 @@ on:
 
 jobs:
   rust-test:
-    name: Rust tests
-    runs-on: windows-latest
+    name: Rust tests (${{ matrix.os }})
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Run tests
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Run TinyDo tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Run sync-server tests
+        run: cargo test --manifest-path sync-server/Cargo.toml
 
   frontend-check:
     name: Frontend checks

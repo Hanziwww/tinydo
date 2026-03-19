@@ -37,6 +37,8 @@ import { HistoryPanel } from "@/components/HistoryPanel";
 import { EventPanel } from "@/components/EventPanel";
 import { useEventStore } from "@/stores/eventStore";
 import { usePredictStore } from "@/stores/predictStore";
+import { useSyncStore } from "@/stores/syncStore";
+import { ConflictDialog } from "@/components/sync/ConflictDialog";
 
 const MINI_W = 320;
 const MINI_H = 420;
@@ -78,6 +80,14 @@ function App() {
   useEffect(() => {
     if (!hydrated) return;
     void usePredictStore.getState().refreshPredictions();
+    void useSyncStore
+      .getState()
+      .hydrate()
+      .then(() => {
+        if (useSyncStore.getState().configured) {
+          void useSyncStore.getState().triggerSync();
+        }
+      });
     const timer = setTimeout(() => setSplashDone(true), 1500);
     return () => {
       clearTimeout(timer);
@@ -264,6 +274,7 @@ function App() {
       <div className="pointer-events-none">
         <NoticeBanner />
       </div>
+      <ConflictDialog />
       <AnimatePresence mode="wait">
         {showSplash ? (
           <motion.div

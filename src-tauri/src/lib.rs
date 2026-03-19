@@ -4,6 +4,7 @@ mod error;
 mod models;
 mod predict;
 mod reminders;
+pub mod sync;
 
 use std::sync::Mutex;
 
@@ -63,6 +64,14 @@ pub fn run() {
             commands::export::save_poster,
             reminders::reschedule_reminders,
             reminders::cancel_all_reminders,
+            sync::sync_generate_key,
+            sync::sync_configure,
+            sync::sync_push,
+            sync::sync_pull,
+            sync::sync_full,
+            sync::sync_get_status,
+            sync::sync_disconnect,
+            sync::sync_resolve_conflict,
         ])
         .setup(|app| {
             // ── Initialize SQLite ──────────────────────────────────────

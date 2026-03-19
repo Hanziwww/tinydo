@@ -6,6 +6,7 @@ import { exportAllData, importAllData } from "@/lib/export";
 import { parseError } from "@/lib/backend";
 import { showErrorNotice, showSuccessNotice } from "@/lib/errorNotice";
 import { cn, formatHourLabel } from "@/lib/utils";
+import { SyncSettings } from "@/components/sync/SyncSettings";
 
 export function SettingsPanel() {
   const [transferMsg, setTransferMsg] = useState<{
@@ -452,6 +453,7 @@ export function SettingsPanel() {
           </div>
         )}
       </div>
+      <SyncSettings />
     </div>
   );
 }

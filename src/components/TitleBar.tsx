@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Minimize2, Square, X } from "lucide-react";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { SyncIndicator } from "@/components/sync/SyncIndicator";
 
 interface Props {
   onMiniMode?: () => void;
@@ -24,6 +25,7 @@ export function TitleBar({ onMiniMode }: Props) {
       <div className="flex-1" />
 
       <div className="flex items-center" onMouseDown={(e) => e.stopPropagation()}>
+        <SyncIndicator />
         {onMiniMode && (
           <button
             type="button"
