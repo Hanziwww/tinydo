@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Todo, Tag, TagGroup } from "@/types";
+import type { Todo, Tag, TagGroup, TinyEvent, PredictionResult } from "@/types";
 
 // ── Error parsing ──────────────────────────────────────────────────────
 
@@ -39,6 +39,7 @@ export interface BackendSettings {
   maxDurationDays: number;
   fullModeRect: { w: number; h: number; x: number; y: number } | null;
   miniModePosition: { x: number; y: number } | null;
+  eventDebounceSeconds: number;
 }
 
 export interface LegacyData {
@@ -137,6 +138,30 @@ export function importData(filePath: string): Promise<ImportResult> {
 
 export function savePoster(filePath: string, pngBase64: string, dpi: number): Promise<void> {
   return invoke("save_poster", { filePath, pngBase64, dpi });
+}
+
+// ── Events ────────────────────────────────────────────────────────────
+
+export function saveEvents(events: TinyEvent[]): Promise<void> {
+  return invoke("save_events", { events });
+}
+
+export function getEventsForTodo(todoId: string): Promise<TinyEvent[]> {
+  return invoke<TinyEvent[]>("get_events_for_todo", { todoId });
+}
+
+export function getEventsForDate(dayStartMs: number, dayEndMs: number): Promise<TinyEvent[]> {
+  return invoke<TinyEvent[]>("get_events_for_date", { dayStartMs, dayEndMs });
+}
+
+export function getEventsInRange(fromMs: number, toMs: number): Promise<TinyEvent[]> {
+  return invoke<TinyEvent[]>("get_events_in_range", { fromMs, toMs });
+}
+
+// ── Predict ───────────────────────────────────────────────────────────
+
+export function predictCompletions(): Promise<PredictionResult[]> {
+  return invoke<PredictionResult[]>("predict_completions");
 }
 
 // ── Reminders ──────────────────────────────────────────────────────────

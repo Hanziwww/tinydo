@@ -34,6 +34,9 @@ import { initBackendData, settingsToStore } from "@/lib/init";
 import { parseError } from "@/lib/backend";
 import type { PlanningBoard } from "@/types";
 import { HistoryPanel } from "@/components/HistoryPanel";
+import { EventPanel } from "@/components/EventPanel";
+import { useEventStore } from "@/stores/eventStore";
+import { usePredictStore } from "@/stores/predictStore";
 
 const MINI_W = 320;
 const MINI_H = 420;
@@ -74,8 +77,11 @@ function App() {
 
   useEffect(() => {
     if (!hydrated) return;
+    void usePredictStore.getState().refreshPredictions();
     const timer = setTimeout(() => setSplashDone(true), 1500);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+    };
   }, [hydrated]);
 
   useEffect(() => {
@@ -547,6 +553,8 @@ function App() {
                     )}
                   </AnimatePresence>
 
+                  <EventPanelOverlay />
+
                   <AnimatePresence>
                     {showSettings && (
                       <motion.div
@@ -595,6 +603,44 @@ function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function EventPanelOverlay() {
+  const eventViewTodoId = useEventStore((s) => s.eventViewTodoId);
+  const setEventViewTodoId = useEventStore((s) => s.setEventViewTodoId);
+  const editingId = useTodoStore((s) => s.editingTodoId);
+  const setEditingId = useTodoStore((s) => s.setEditingTodoId);
+
+  useEffect(() => {
+    if (eventViewTodoId && editingId) {
+      setEditingId(null);
+    }
+  }, [eventViewTodoId, editingId, setEditingId]);
+
+  return (
+    <>
+      {eventViewTodoId && (
+        <div
+          className="absolute inset-0 z-40 bg-black/30"
+          onClick={() => setEventViewTodoId(null)}
+        />
+      )}
+      <AnimatePresence>
+        {eventViewTodoId && (
+          <motion.div
+            key="event-panel"
+            className="absolute bottom-2 right-2 top-2 z-50 w-[400px] overflow-hidden border border-border bg-surface-1 shadow-2xl"
+            initial={{ x: "100%", opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: "100%", opacity: 0 }}
+            transition={{ duration: 0.25, ease: EASE_OUT_EXPO }}
+          >
+            <EventPanel />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 

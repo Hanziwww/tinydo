@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { getTodoHistoryDate } from "@/lib/todo-helpers";
 import { cn, DIFFICULTY_CONFIG, formatTimeSlots, hexToRgba } from "@/lib/utils";
 import { t } from "@/i18n";
@@ -7,6 +7,9 @@ import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { TagBadge } from "./TagBadge";
+import { EventTimelineForDate } from "./EventPanel";
+import * as backend from "@/lib/backend";
+import type { TinyEvent } from "@/types";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -267,10 +270,67 @@ export function HistoryPanel() {
         </div>
       )}
 
+      {selectedDate && <HistoryEventSection date={selectedDate} todos={archivedTodos} />}
+
       {!selectedDate && (
         <p className="py-8 text-center text-[14px] text-text-3">
           {t("history.select_date", locale)}
         </p>
+      )}
+    </div>
+  );
+}
+
+function HistoryEventSection({
+  date,
+  todos,
+}: {
+  date: string;
+  todos: ReturnType<typeof useTodoStore.getState>["archivedTodos"];
+}) {
+  const locale = useSettingsStore((s) => s.locale);
+  const [events, setEvents] = useState<TinyEvent[]>([]);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const d = new Date(date + "T00:00:00");
+    const dayStartMs = d.getTime();
+    const dayEndMs = dayStartMs + 86_400_000;
+    backend
+      .getEventsForDate(dayStartMs, dayEndMs)
+      .then((evts) => setEvents(evts))
+      .catch(() => setEvents([]));
+  }, [date]);
+
+  const todoTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const td of todos) map.set(td.id, td.title);
+    return map;
+  }, [todos]);
+
+  if (events.length === 0) return null;
+
+  return (
+    <div className="mt-4 space-y-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 py-1 text-left"
+      >
+        <div className="h-px flex-1 bg-border/50" />
+        <span className="flex items-center gap-1 text-[12px] font-medium text-text-3">
+          {t("event.history_section", locale)} · {events.length}
+          <ChevronDown
+            size={12}
+            className={cn("transition-transform", expanded && "rotate-180")}
+          />
+        </span>
+        <div className="h-px flex-1 bg-border/50" />
+      </button>
+      {expanded && (
+        <div className="pl-2">
+          <EventTimelineForDate events={events} todoTitleMap={todoTitleMap} />
+        </div>
       )}
     </div>
   );

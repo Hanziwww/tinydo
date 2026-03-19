@@ -14,6 +14,8 @@ import { getTodayDateKey, getTomorrowDateKey, shiftDateKey } from "@/lib/utils";
 import * as backend from "@/lib/backend";
 import { showErrorNotice, showSuccessNotice, showUndoNotice } from "@/lib/errorNotice";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { recordEvent } from "@/stores/eventStore";
+import { usePredictStore } from "@/stores/predictStore";
 
 interface TodoState {
   todos: Todo[];
@@ -71,16 +73,26 @@ function rollbackTodoState(previous: Partial<TodoRollbackState>, error: unknown)
   showErrorNotice(error);
 }
 
+function notifyPredictionDataChanged(delayMs = 300) {
+  usePredictStore.getState().scheduleRefresh(delayMs);
+}
+
 function persistTodos(todos: Todo[]) {
-  return backend.saveTodos(todos, false);
+  return backend.saveTodos(todos, false).then(() => {
+    notifyPredictionDataChanged();
+  });
 }
 
 function persistArchivedTodos(archived: Todo[]) {
-  return backend.saveTodos(archived, true);
+  return backend.saveTodos(archived, true).then(() => {
+    notifyPredictionDataChanged();
+  });
 }
 
 function persistSingleTodo(todo: Todo, archived = false) {
-  return backend.saveTodo(todo, archived);
+  return backend.saveTodo(todo, archived).then(() => {
+    notifyPredictionDataChanged();
+  });
 }
 
 function persistTodoBatch(todos: Todo[], archived = false) {
@@ -88,7 +100,9 @@ function persistTodoBatch(todos: Todo[], archived = false) {
 }
 
 function persistDeleteTodo(id: string) {
-  return backend.deleteTodo(id);
+  return backend.deleteTodo(id).then(() => {
+    notifyPredictionDataChanged();
+  });
 }
 
 async function syncTodoCollections(current: TodoPersistSnapshot, target: TodoPersistSnapshot) {
@@ -500,6 +514,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       historyKind: null,
     };
     set((s) => ({ todos: [todo, ...s.todos] }));
+    recordEvent(todo.id, "created");
     void persistSingleTodo(todo).catch((error: unknown) => {
       rollbackTodoState({ todos: previousTodos }, error);
     });
@@ -543,21 +558,47 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       selectionMode: false,
       selectedTodoIds: [],
     }));
+    recordEvent(todo.id, "created");
     showSuccessNotice(t("notice.timeline_task_created", locale));
     void persistSingleTodo(todo).catch((error: unknown) => rollbackTodoState(previous, error));
     return todo.id;
   },
 
   updateTodo: (id, updates) => {
+    const before = get().todos.find((t) => t.id === id);
     set((s) => ({ todos: s.todos.map((t) => (t.id === id ? { ...t, ...updates } : t)) }));
     const updated = get().todos.find((t) => t.id === id);
-    if (updated) {
+    if (before && updated) {
+      if ("title" in updates && updates.title !== before.title)
+        recordEvent(id, "titleChanged", "title", before.title, updates.title);
+      if ("difficulty" in updates && updates.difficulty !== before.difficulty)
+        recordEvent(id, "difficultyChanged", "difficulty", before.difficulty, updates.difficulty);
+      if ("reminderMinsBefore" in updates && updates.reminderMinsBefore !== before.reminderMinsBefore)
+        recordEvent(id, "reminderChanged", "reminderMinsBefore", before.reminderMinsBefore, updates.reminderMinsBefore);
+      if ("durationDays" in updates && updates.durationDays !== before.durationDays)
+        recordEvent(id, "durationChanged", "durationDays", before.durationDays, updates.durationDays);
+      if ("targetDate" in updates && updates.targetDate !== before.targetDate) {
+        const tomorrow = getTomorrowDateKey();
+        const evtType = updates.targetDate === tomorrow ? "movedToTomorrow" : "dateChanged";
+        recordEvent(id, evtType, "targetDate", before.targetDate, updates.targetDate);
+      }
+      if ("tagIds" in updates) {
+        const oldSet = new Set(before.tagIds);
+        const newSet = new Set(updates.tagIds ?? []);
+        for (const tagId of updates.tagIds ?? []) {
+          if (!oldSet.has(tagId)) recordEvent(id, "tagAdded", "tagIds", null, tagId);
+        }
+        for (const tagId of before.tagIds) {
+          if (!newSet.has(tagId)) recordEvent(id, "tagRemoved", "tagIds", tagId, null);
+        }
+      }
       void persistSingleTodo(updated).catch((error: unknown) => showErrorNotice(error));
     }
   },
 
   toggleTodo: (id, dateKey) => {
     const previousTodos = get().todos;
+    const before = get().todos.find((t) => t.id === id);
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== id) return t;
@@ -583,7 +624,8 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       }),
     }));
     const updated = get().todos.find((t) => t.id === id);
-    if (updated) {
+    if (updated && before) {
+      recordEvent(id, updated.completed ? "completed" : "uncompleted");
       void persistSingleTodo(updated).catch((error: unknown) => {
         rollbackTodoState({ todos: previousTodos }, error);
       });
@@ -591,6 +633,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   },
 
   deleteTodo: (id) => {
+    recordEvent(id, "deleted");
     const previous = {
       todos: get().todos,
       archivedTodos: get().archivedTodos,
@@ -634,6 +677,14 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   batchMoveSelected: (targetDate) => {
     const selectedIds = new Set(get().selectedTodoIds);
     if (selectedIds.size === 0) return;
+    const tomorrow = getTomorrowDateKey();
+    for (const selId of selectedIds) {
+      const todo = get().todos.find((t) => t.id === selId);
+      if (todo && todo.targetDate !== targetDate) {
+        const evtType = targetDate === tomorrow ? "movedToTomorrow" : "dateChanged";
+        recordEvent(selId, evtType, "targetDate", todo.targetDate, targetDate);
+      }
+    }
     const previous = {
       todos: get().todos,
       archivedTodos: get().archivedTodos,
@@ -672,6 +723,9 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
   batchDeleteSelected: () => {
     const selectedIds = new Set(get().selectedTodoIds);
     if (selectedIds.size === 0) return;
+    for (const selId of selectedIds) {
+      recordEvent(selId, "deleted");
+    }
     const previous = {
       todos: get().todos,
       archivedTodos: get().archivedTodos,
@@ -740,6 +794,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       selectionMode: false,
       selectedTodoIds: [],
     }));
+    recordEvent(duplicated.id, "duplicated", null, null, id);
     const locale = getLocale();
     showSuccessNotice(t("notice.duplicated_item", locale));
     void persistSingleTodo(duplicated).catch((error: unknown) =>
@@ -816,6 +871,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       .todos.filter((t) => t.completed)
       .map((t) => createHistoryTodo(t, historyDate, "completed"));
     if (done.length === 0) return;
+    for (const d of done) recordEvent(d.id, "archived");
     const doneIds = new Set(done.map((todo) => todo.id));
     set((s) => ({
       todos: s.todos
@@ -880,6 +936,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     });
 
     if (fullArchives.length === 0 && dailySnapshots.length === 0) return;
+    for (const fa of fullArchives) recordEvent(fa.id, "archived");
 
     const fullArchiveIds = new Set(fullArchives.map((todo) => todo.id));
     const dailySnapshotSourceIds = new Set(
@@ -960,6 +1017,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         };
       }),
     }));
+    recordEvent(todoId, "subtaskAdded", null, null, title);
     const updated = get().todos.find((t) => t.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -970,6 +1028,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
 
   updateSubtaskTitle: (todoId, subtaskId, title) => {
     const previousTodos = get().todos;
+    const oldSub = get().todos.find((t) => t.id === todoId)?.subtasks.find((s) => s.id === subtaskId);
     set((s) => ({
       todos: s.todos.map((todo) => {
         if (todo.id !== todoId) return todo;
@@ -981,6 +1040,9 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         };
       }),
     }));
+    if (oldSub && oldSub.title !== title) {
+      recordEvent(todoId, "subtaskRenamed", subtaskId, oldSub.title, title);
+    }
     const updated = get().todos.find((todo) => todo.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -991,6 +1053,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
 
   toggleSubtask: (todoId, subtaskId) => {
     const previousTodos = get().todos;
+    const oldSub = get().todos.find((t) => t.id === todoId)?.subtasks.find((s) => s.id === subtaskId);
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -1002,6 +1065,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         };
       }),
     }));
+    recordEvent(todoId, "subtaskToggled", subtaskId, oldSub?.completed, !oldSub?.completed);
     const updated = get().todos.find((t) => t.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -1012,12 +1076,14 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
 
   deleteSubtask: (todoId, subtaskId) => {
     const previousTodos = get().todos;
+    const oldSub = get().todos.find((t) => t.id === todoId)?.subtasks.find((s) => s.id === subtaskId);
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
         return { ...t, subtasks: t.subtasks.filter((st) => st.id !== subtaskId) };
       }),
     }));
+    recordEvent(todoId, "subtaskRemoved", subtaskId, oldSub?.title, null);
     const updated = get().todos.find((t) => t.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -1050,6 +1116,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         };
       }),
     }));
+    recordEvent(todoId, "relationAdded", null, null, { targetTaskId, relationType });
     const updated = get().todos.find((todo) => todo.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -1060,6 +1127,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
 
   deleteRelation: (todoId, relationId) => {
     const previousTodos = get().todos;
+    const oldRel = get().todos.find((t) => t.id === todoId)?.outgoingRelations.find((r) => r.id === relationId);
     set((s) => ({
       todos: s.todos.map((todo) => {
         if (todo.id !== todoId) return todo;
@@ -1071,6 +1139,9 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         };
       }),
     }));
+    if (oldRel) {
+      recordEvent(todoId, "relationRemoved", null, { targetTaskId: oldRel.targetTaskId, relationType: oldRel.relationType }, null);
+    }
     const updated = get().todos.find((todo) => todo.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -1088,6 +1159,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         return { ...t, timeSlots: [...t.timeSlots, slot] };
       }),
     }));
+    recordEvent(todoId, "timeSlotAdded");
     const updated = get().todos.find((t) => t.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -1104,6 +1176,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         return { ...t, timeSlots: t.timeSlots.filter((sl) => sl.id !== slotId) };
       }),
     }));
+    recordEvent(todoId, "timeSlotRemoved", slotId);
     const updated = get().todos.find((t) => t.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {
@@ -1114,6 +1187,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
 
   updateTimeSlot: (todoId, slotId, updates) => {
     const previousTodos = get().todos;
+    const oldSlot = get().todos.find((t) => t.id === todoId)?.timeSlots.find((s) => s.id === slotId);
     set((s) => ({
       todos: s.todos.map((t) => {
         if (t.id !== todoId) return t;
@@ -1123,6 +1197,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
         };
       }),
     }));
+    recordEvent(todoId, "timeSlotChanged", slotId, oldSlot ? { start: oldSlot.start, end: oldSlot.end } : null, updates);
     const updated = get().todos.find((t) => t.id === todoId);
     if (updated) {
       void persistSingleTodo(updated).catch((error: unknown) => {

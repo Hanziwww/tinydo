@@ -290,6 +290,12 @@ pub struct Settings {
     pub max_duration_days: u32,
     pub full_mode_rect: Option<WindowRect>,
     pub mini_mode_position: Option<WindowPos>,
+    #[serde(default = "default_event_debounce")]
+    pub event_debounce_seconds: u32,
+}
+
+fn default_event_debounce() -> u32 {
+    10
 }
 
 impl Settings {
@@ -383,7 +389,64 @@ impl Default for Settings {
             max_duration_days: 5,
             full_mode_rect: None,
             mini_mode_position: None,
+            event_debounce_seconds: 10,
         }
+    }
+}
+
+// ── TinyEvents ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum EventType {
+    Created,
+    TitleChanged,
+    TagAdded,
+    TagRemoved,
+    DifficultyChanged,
+    TimeSlotAdded,
+    TimeSlotRemoved,
+    TimeSlotChanged,
+    ReminderChanged,
+    SubtaskAdded,
+    SubtaskRemoved,
+    SubtaskToggled,
+    SubtaskRenamed,
+    RelationAdded,
+    RelationRemoved,
+    Completed,
+    Uncompleted,
+    MovedToTomorrow,
+    DateChanged,
+    DurationChanged,
+    Duplicated,
+    Archived,
+    Deleted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TinyEvent {
+    pub id: String,
+    pub todo_id: String,
+    pub event_type: EventType,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub old_value: Option<serde_json::Value>,
+    #[serde(default)]
+    pub new_value: Option<serde_json::Value>,
+    pub timestamp: f64,
+}
+
+impl TinyEvent {
+    pub fn validate(&self) -> Result<(), AppError> {
+        validate_id(&self.id, "事件 ID")?;
+        validate_id(&self.todo_id, "事件任务 ID")?;
+        if !self.timestamp.is_finite() || self.timestamp < 0.0 {
+            return Err(AppError::custom("事件时间戳无效"));
+        }
+        Ok(())
     }
 }
 
@@ -420,6 +483,8 @@ pub struct ExportEnvelope {
     pub tags: Vec<Tag>,
     pub tag_groups: Vec<TagGroup>,
     pub settings: Settings,
+    #[serde(default)]
+    pub events: Vec<TinyEvent>,
 }
 
 #[cfg(test)]

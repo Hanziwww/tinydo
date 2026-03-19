@@ -31,6 +31,7 @@ interface SettingsState {
   maxDurationDays: number;
   fullModeRect: WindowRect | null;
   miniModePosition: WindowPos | null;
+  eventDebounceSeconds: number;
   _hydrated: boolean;
   _hydrate: (data: Omit<SettingsState, "_hydrated" | "_hydrate" | keyof SettingsActions>) => void;
   setTheme: (theme: Theme) => void;
@@ -46,6 +47,7 @@ interface SettingsState {
   setMaxDurationDays: (v: number) => void;
   setFullModeRect: (rect: WindowRect | null) => void;
   setMiniModePosition: (pos: WindowPos | null) => void;
+  setEventDebounceSeconds: (v: number) => void;
 }
 
 type SettingsActions = {
@@ -62,6 +64,7 @@ type SettingsActions = {
   setMaxDurationDays: (v: number) => void;
   setFullModeRect: (rect: WindowRect | null) => void;
   setMiniModePosition: (pos: WindowPos | null) => void;
+  setEventDebounceSeconds: (v: number) => void;
 };
 
 function applyTheme(theme: Theme) {
@@ -90,6 +93,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
   maxDurationDays: 5,
   fullModeRect: null,
   miniModePosition: null,
+  eventDebounceSeconds: 10,
   _hydrated: false,
 
   _hydrate: (data) => {
@@ -151,6 +155,10 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
   },
   setMiniModePosition: (pos) => {
     set({ miniModePosition: pos });
+    void persistSettings().catch((error: unknown) => showErrorNotice(error));
+  },
+  setEventDebounceSeconds: (v) => {
+    set({ eventDebounceSeconds: Math.max(1, Math.min(60, Math.round(v))) });
     void persistSettings().catch((error: unknown) => showErrorNotice(error));
   },
 }));

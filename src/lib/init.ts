@@ -122,6 +122,7 @@ async function tryMigrateFromLocalStorage(): Promise<{
     maxDurationDays: asNum(s.maxDurationDays, 5),
     fullModeRect: (s.fullModeRect as BackendSettings["fullModeRect"]) ?? null,
     miniModePosition: (s.miniModePosition as BackendSettings["miniModePosition"]) ?? null,
+    eventDebounceSeconds: asNum(s.eventDebounceSeconds, 10),
   };
   await backend.migrateFromLegacy({
     todos,
@@ -161,6 +162,7 @@ export function settingsToStore(s: BackendSettings) {
     maxDurationDays: s.maxDurationDays,
     fullModeRect: s.fullModeRect,
     miniModePosition: s.miniModePosition,
+    eventDebounceSeconds: s.eventDebounceSeconds ?? 10,
   };
 }
 
@@ -182,6 +184,7 @@ export function storeToSettings(state: {
   maxDurationDays: number;
   fullModeRect: { w: number; h: number; x: number; y: number } | null;
   miniModePosition: { x: number; y: number } | null;
+  eventDebounceSeconds: number;
 }): BackendSettings {
   return {
     theme: state.theme,
@@ -198,5 +201,6 @@ export function storeToSettings(state: {
     maxDurationDays: state.maxDurationDays,
     fullModeRect: state.fullModeRect,
     miniModePosition: state.miniModePosition,
+    eventDebounceSeconds: state.eventDebounceSeconds,
   };
 }

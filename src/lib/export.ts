@@ -4,6 +4,7 @@ import { settingsToStore } from "@/lib/init";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { usePredictStore } from "@/stores/predictStore";
 
 async function reloadImportedState() {
   const [todos, archivedTodos, tags, tagGroups, settings] = await Promise.all([
@@ -44,6 +45,7 @@ export async function importAllData(): Promise<backend.ImportResult | null> {
   } catch {
     await reloadImportedState();
   }
+  await usePredictStore.getState().refreshPredictions();
 
   return result;
 }

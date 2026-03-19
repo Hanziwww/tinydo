@@ -38,6 +38,17 @@ pub fn init_db(db_path: &std::path::Path) -> Result<Connection, AppError> {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS events (
+            id         TEXT PRIMARY KEY,
+            todo_id    TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            field      TEXT,
+            old_value  TEXT,
+            new_value  TEXT,
+            timestamp  REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_todo ON events(todo_id);
+        CREATE INDEX IF NOT EXISTS idx_events_ts   ON events(timestamp);
         ",
     )?;
 
@@ -213,6 +224,98 @@ pub fn save_settings(conn: &Connection, settings: &Settings) -> Result<(), AppEr
     Ok(())
 }
 
+// ── Events ────────────────────────────────────────────────────────────
+
+pub fn save_events(conn: &Connection, events: &[TinyEvent]) -> Result<(), AppError> {
+    let tx = conn.unchecked_transaction()?;
+    for event in events {
+        let event_type = serde_json::to_value(&event.event_type)?;
+        let event_type_str = event_type.as_str().unwrap_or("");
+        let old_val = event.old_value.as_ref().map(|v| v.to_string());
+        let new_val = event.new_value.as_ref().map(|v| v.to_string());
+        tx.execute(
+            "INSERT OR REPLACE INTO events (id, todo_id, event_type, field, old_value, new_value, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![event.id, event.todo_id, event_type_str, event.field, old_val, new_val, event.timestamp],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn get_events_for_todo(conn: &Connection, todo_id: &str) -> Result<Vec<TinyEvent>, AppError> {
+    let mut stmt =
+        conn.prepare("SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events WHERE todo_id = ?1 ORDER BY timestamp ASC")?;
+    let rows = stmt.query_map(params![todo_id], parse_event_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::from)
+}
+
+pub fn get_events_for_date(
+    conn: &Connection,
+    day_start_ms: f64,
+    day_end_ms: f64,
+) -> Result<Vec<TinyEvent>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events WHERE timestamp >= ?1 AND timestamp < ?2 ORDER BY timestamp ASC",
+    )?;
+    let rows = stmt.query_map(params![day_start_ms, day_end_ms], parse_event_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::from)
+}
+
+pub fn get_events_in_range(
+    conn: &Connection,
+    from_ms: f64,
+    to_ms: f64,
+) -> Result<Vec<TinyEvent>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC",
+    )?;
+    let rows = stmt.query_map(params![from_ms, to_ms], parse_event_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::from)
+}
+
+pub fn get_all_events(conn: &Connection) -> Result<Vec<TinyEvent>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, todo_id, event_type, field, old_value, new_value, timestamp FROM events ORDER BY timestamp ASC",
+    )?;
+    let rows = stmt.query_map([], parse_event_row)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::from)
+}
+
+pub fn clear_events(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("DELETE FROM events", [])?;
+    Ok(())
+}
+
+fn parse_event_row(row: &rusqlite::Row) -> rusqlite::Result<TinyEvent> {
+    let id: String = row.get(0)?;
+    let todo_id: String = row.get(1)?;
+    let event_type_str: String = row.get(2)?;
+    let field: Option<String> = row.get(3)?;
+    let old_value_str: Option<String> = row.get(4)?;
+    let new_value_str: Option<String> = row.get(5)?;
+    let timestamp: f64 = row.get(6)?;
+
+    let quoted = format!("\"{}\"", event_type_str);
+    let event_type: EventType =
+        serde_json::from_str(&quoted).unwrap_or(EventType::Created);
+    let old_value = old_value_str.and_then(|s| serde_json::from_str(&s).ok());
+    let new_value = new_value_str.and_then(|s| serde_json::from_str(&s).ok());
+
+    Ok(TinyEvent {
+        id,
+        todo_id,
+        event_type,
+        field,
+        old_value,
+        new_value,
+        timestamp,
+    })
+}
+
 // ── Bulk clear (for import replace mode) ───────────────────────────────
 
 pub fn clear_todos(conn: &Connection) -> Result<(), AppError> {
@@ -310,6 +413,9 @@ mod tests {
             CREATE TABLE tag_groups (id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE events (id TEXT PRIMARY KEY, todo_id TEXT NOT NULL, event_type TEXT NOT NULL, field TEXT, old_value TEXT, new_value TEXT, timestamp REAL NOT NULL);
+            CREATE INDEX idx_events_todo ON events(todo_id);
+            CREATE INDEX idx_events_ts ON events(timestamp);
             ",
         )
         .unwrap();
@@ -653,5 +759,56 @@ mod tests {
         assert_eq!(settings.theme, "light");
         assert_eq!(settings.locale, "en");
         assert!(settings.show_timeline); // default preserved
+    }
+
+    fn sample_event(id: &str, todo_id: &str, ts: f64) -> TinyEvent {
+        TinyEvent {
+            id: id.into(),
+            todo_id: todo_id.into(),
+            event_type: EventType::Created,
+            field: None,
+            old_value: None,
+            new_value: None,
+            timestamp: ts,
+        }
+    }
+
+    #[test]
+    fn event_save_and_query_by_todo() {
+        let conn = test_conn();
+        let events = vec![
+            sample_event("e1", "t1", 1000.0),
+            sample_event("e2", "t1", 2000.0),
+            sample_event("e3", "t2", 3000.0),
+        ];
+        save_events(&conn, &events).unwrap();
+
+        let t1_events = get_events_for_todo(&conn, "t1").unwrap();
+        assert_eq!(t1_events.len(), 2);
+        assert_eq!(t1_events[0].id, "e1");
+        assert_eq!(t1_events[1].id, "e2");
+    }
+
+    #[test]
+    fn event_query_by_date_range() {
+        let conn = test_conn();
+        let events = vec![
+            sample_event("e1", "t1", 1000.0),
+            sample_event("e2", "t1", 2000.0),
+            sample_event("e3", "t2", 5000.0),
+        ];
+        save_events(&conn, &events).unwrap();
+
+        let range = get_events_for_date(&conn, 500.0, 3000.0).unwrap();
+        assert_eq!(range.len(), 2);
+    }
+
+    #[test]
+    fn event_clear() {
+        let conn = test_conn();
+        save_events(&conn, &[sample_event("e1", "t1", 1000.0)]).unwrap();
+        assert_eq!(get_all_events(&conn).unwrap().len(), 1);
+        clear_events(&conn).unwrap();
+        assert!(get_all_events(&conn).unwrap().is_empty());
     }
 }

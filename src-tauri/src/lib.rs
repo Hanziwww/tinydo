@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod error;
 mod models;
+mod predict;
 mod reminders;
 
 use std::sync::Mutex;
@@ -52,6 +53,11 @@ pub fn run() {
             commands::settings::save_settings,
             commands::settings::check_needs_migration,
             commands::settings::migrate_from_legacy,
+            commands::events::save_events,
+            commands::events::get_events_for_todo,
+            commands::events::get_events_for_date,
+            commands::events::get_events_in_range,
+            commands::predict_completions,
             commands::export::export_data,
             commands::export::import_data,
             commands::export::save_poster,

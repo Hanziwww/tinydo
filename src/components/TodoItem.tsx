@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Check, ChevronRight, GripVertical, ListPlus, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, GripVertical, ListPlus, ScrollText, Trash2 } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -27,6 +27,9 @@ import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useEventStore } from "@/stores/eventStore";
+import { usePredictStore } from "@/stores/predictStore";
+import { PredictionBadge } from "@/components/PredictionBadge";
 import { TagBadge } from "@/components/TagBadge";
 import type { Todo, SubTask, Locale } from "@/types";
 
@@ -185,7 +188,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
         if (e.key === "Enter") rowClick(e as unknown as React.MouseEvent);
       }}
       className={cn(
-        "group relative grid grid-cols-[18px_minmax(0,1fr)_18px] items-start gap-x-3 border-b border-border/60 py-2.5 pl-10 pr-5 transition-all duration-300",
+        "group relative grid grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-3 border-b border-border/60 py-2.5 pl-10 pr-5 transition-all duration-300",
         od > 0 ? "bg-warning/[0.04]" : "hover:bg-surface-2/40",
         selectionMode && isSelected && "bg-accent/5 ring-1 ring-accent/40",
         isHighlighted &&
@@ -276,7 +279,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
             className="w-full bg-transparent text-[15px] leading-snug text-text-1 outline-none"
           />
         ) : (
-          <div className="flex items-baseline gap-1.5">
+          <div className="flex items-center gap-1.5">
             <p
               className={cn(
                 "text-[15px] leading-snug text-text-1",
@@ -315,6 +318,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
                 )}
               </button>
             )}
+            <TodoPredictionBadge todoId={todo.id} completed={isChecked || todo.completed} />
           </div>
         )}
 
@@ -414,13 +418,16 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
       </div>
 
       {!selectionMode && (
-        <button
-          type="button"
-          onClick={handleDelete}
-          className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
-        >
-          <Trash2 size={15} />
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <EventButton todoId={todo.id} />
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -653,6 +660,36 @@ function SubtaskList({
         </div>
       </div>
     </div>
+  );
+}
+
+function TodoPredictionBadge({ todoId, completed }: { todoId: string; completed: boolean }) {
+  const prediction = usePredictStore((s) => s.predictions.get(todoId));
+  if (completed || prediction === undefined) return null;
+  return <PredictionBadge prediction={prediction} variant="compact" />;
+}
+
+function EventButton({ todoId }: { todoId: string }) {
+  const setEventViewTodoId = useEventStore((s) => s.setEventViewTodoId);
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        setEventViewTodoId(todoId);
+      }}
+      className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-accent group-hover:opacity-100"
+    >
+      <ScrollText size={15} />
+    </button>
   );
 }
 

@@ -16,6 +16,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { t } from "@/i18n";
 import { withTodoDefaults } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { usePredictStore } from "@/stores/predictStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import {
@@ -26,6 +27,12 @@ import {
   getTomorrowDateKey,
 } from "@/lib/utils";
 import { TagBadge } from "./TagBadge";
+import {
+  formatPredictionFactor,
+  formatPredictionPercent,
+  getPredictionConfidenceLabel,
+  PredictionBadge,
+} from "./PredictionBadge";
 import type { Difficulty, Locale, SubTask, TaskRelationType, TimeSlot, Todo } from "@/types";
 
 const REMINDER_PRESETS = [null, 0, 5, 15, 30, 60, 120, 720] as const;
@@ -49,6 +56,8 @@ export function TodoDetail() {
   const deleteRelation = useTodoStore((s) => s.deleteRelation);
   const todos = useTodoStore((s) => s.todos);
   const tags = useTagStore((s) => s.tags);
+  const prediction = usePredictStore((s) => (editId ? s.predictions.get(editId) : undefined));
+  const predictStatus = usePredictStore((s) => s.status);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [subtaskInput, setSubtaskInput] = useState("");
@@ -187,6 +196,90 @@ export function TodoDetail() {
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-[15px] font-medium text-text-2">
+            {t("predict.title", locale)}
+          </label>
+          <div className="space-y-3 border border-border bg-surface-2/50 p-4">
+            {prediction ? (
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <PredictionBadge prediction={prediction} variant="detail" />
+                    <div>
+                      <div className="text-[15px] font-medium text-text-1">
+                        {t("predict.on_time_probability", locale)}
+                      </div>
+                      <div className="text-[13px] text-text-3">
+                        {t("predict.baseline", locale, {
+                          n: formatPredictionPercent(
+                            prediction.baselineProbability,
+                            prediction.confidence,
+                          ),
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[12px] font-medium text-text-3">
+                    {getPredictionConfidenceLabel(prediction.confidence, locale)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-[13px] text-text-3">
+                  <span>{t("predict.samples", locale, { n: prediction.effectiveSampleSize.toFixed(1) })}</span>
+                  <span>
+                    {t("predict.difficulty_penalty", locale)}{" "}
+                    {`${(prediction.difficultyPenalty * 100).toFixed(1)}%`}
+                  </span>
+                  <span>
+                    {t("predict.time_load_ratio", locale)}{" "}
+                    {`${(prediction.timeLoadRatio * 100).toFixed(1)}%`}
+                  </span>
+                  {predictStatus === "stale" || predictStatus === "refreshing" ? (
+                    <span>{t("predict.refreshing", locale)}</span>
+                  ) : null}
+                </div>
+                {prediction.factors.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <div className="text-[13px] font-medium text-text-2">
+                      {t("predict.top_factors", locale)}
+                    </div>
+                    {prediction.factors.map((factor, index) => (
+                      <div
+                        key={`${factor.kind}-${index}`}
+                        className="flex items-start justify-between gap-3 text-[13px]"
+                      >
+                        <span className="min-w-0 flex-1 text-text-2">
+                          {formatPredictionFactor(factor, locale)}
+                        </span>
+                        <span
+                          className={cn(
+                            "shrink-0 font-medium",
+                            factor.impact > 0
+                              ? "text-success"
+                              : factor.impact < 0
+                                ? "text-warning"
+                                : "text-text-3",
+                          )}
+                        >
+                          {`${factor.impact > 0 ? "+" : ""}${(factor.impact * 100).toFixed(1)}pp`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-text-3">{t("predict.no_factors", locale)}</p>
+                )}
+              </>
+            ) : (
+              <div className="text-[13px] text-text-3">
+                {predictStatus === "refreshing" || predictStatus === "stale"
+                  ? t("predict.refreshing", locale)
+                  : t("predict.unavailable", locale)}
+              </div>
+            )}
           </div>
         </div>
 

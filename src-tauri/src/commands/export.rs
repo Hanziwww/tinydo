@@ -5,7 +5,7 @@ use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::models::{
     ensure_unique_ids, ExportEnvelope, ImportResult, Settings, SubTask, Tag, TagGroup,
-    TaskRelation, TimeSlot, Todo, TodoHistoryKind, WindowPos, WindowRect,
+    TaskRelation, TinyEvent, TimeSlot, Todo, TodoHistoryKind, WindowPos, WindowRect,
 };
 use crate::reminders;
 
@@ -25,15 +25,17 @@ pub fn export_data(state: State<'_, DbState>, file_path: String) -> Result<(), A
     let tags = db::get_tags(&conn)?;
     let tag_groups = db::get_tag_groups(&conn)?;
     let settings = db::get_settings(&conn)?;
+    let events = db::get_all_events(&conn)?;
 
     let envelope = ExportEnvelope {
-        version: "2.0".into(),
+        version: "3.0".into(),
         exported_at: chrono::Utc::now().to_rfc3339(),
         todos,
         archived_todos,
         tags,
         tag_groups,
         settings,
+        events,
     };
 
     let json = serde_json::to_string_pretty(&envelope)?;
@@ -145,6 +147,7 @@ struct ImportSettingsPatch {
     max_duration_days: Option<u32>,
     full_mode_rect: Option<Option<WindowRect>>,
     mini_mode_position: Option<Option<WindowPos>>,
+    event_debounce_seconds: Option<u32>,
 }
 
 impl ImportSettingsPatch {
@@ -163,6 +166,7 @@ impl ImportSettingsPatch {
             && self.max_duration_days.is_none()
             && self.full_mode_rect.is_none()
             && self.mini_mode_position.is_none()
+            && self.event_debounce_seconds.is_none()
     }
 }
 
@@ -173,6 +177,7 @@ struct ParsedImportPayload {
     tags: Vec<Tag>,
     tag_groups: Vec<TagGroup>,
     settings_patch: ImportSettingsPatch,
+    events: Vec<TinyEvent>,
 }
 
 fn get_optional_array_field<'a>(
@@ -309,6 +314,11 @@ fn parse_settings_patch(
             "miniModePosition",
             "导入 miniModePosition",
         )?,
+        event_debounce_seconds: parse_optional_u32_field(
+            obj,
+            "eventDebounceSeconds",
+            "导入 eventDebounceSeconds",
+        )?,
     })
 }
 
@@ -408,7 +418,7 @@ fn parse_import_payload(data: &serde_json::Value) -> Result<ParsedImportPayload,
         .get("version")
         .and_then(|value| value.as_str())
         .ok_or_else(|| AppError::custom("导入文件缺少 version"))?;
-    if version != "2.0" {
+    if version != "2.0" && version != "3.0" {
         return Err(AppError::custom(format!("暂不支持导入版本 {version}")));
     }
 
@@ -465,12 +475,25 @@ fn parse_import_payload(data: &serde_json::Value) -> Result<ParsedImportPayload,
 
     validate_import_payload(&todos, &archived_todos, &tags, &tag_groups)?;
 
+    let events = match get_optional_array_field(obj, "events", "events")? {
+        Some(arr) => arr
+            .iter()
+            .map(|raw| {
+                let event: TinyEvent = serde_json::from_value(raw.clone())?;
+                event.validate()?;
+                Ok(event)
+            })
+            .collect::<Result<Vec<_>, AppError>>()?,
+        None => Vec::new(),
+    };
+
     Ok(ParsedImportPayload {
         todos,
         archived_todos,
         tags,
         tag_groups,
         settings_patch,
+        events,
     })
 }
 
@@ -525,6 +548,9 @@ fn merge_settings_patch(
     if let Some(mini_mode_position) = &patch.mini_mode_position {
         settings.mini_mode_position = mini_mode_position.clone();
     }
+    if let Some(event_debounce_seconds) = patch.event_debounce_seconds {
+        settings.event_debounce_seconds = event_debounce_seconds;
+    }
     settings.validate()?;
 
     Ok(Some(settings))
@@ -545,6 +571,11 @@ fn import_json_to_db(
         &parsed.tag_groups,
         merged_settings.as_ref(),
     )?;
+
+    db::clear_events(conn)?;
+    if !parsed.events.is_empty() {
+        db::save_events(conn, &parsed.events)?;
+    }
 
     Ok(ImportResult {
         todos_count: parsed.todos.len(),
@@ -678,7 +709,7 @@ fn crc32(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ExportEnvelope, Settings};
+    use crate::models::{EventType, ExportEnvelope, Settings, TinyEvent};
     use rusqlite::Connection;
 
     fn test_conn() -> Connection {
@@ -690,6 +721,9 @@ mod tests {
             CREATE TABLE tag_groups (id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE events (id TEXT PRIMARY KEY, todo_id TEXT NOT NULL, event_type TEXT NOT NULL, field TEXT, old_value TEXT, new_value TEXT, timestamp REAL NOT NULL);
+            CREATE INDEX idx_events_todo ON events(todo_id);
+            CREATE INDEX idx_events_ts ON events(timestamp);
             ",
         )
         .unwrap();
@@ -976,7 +1010,7 @@ mod tests {
         };
 
         let envelope = ExportEnvelope {
-            version: "2.0".into(),
+            version: "3.0".into(),
             exported_at: "2026-03-16T12:00:00Z".into(),
             todos: vec![todo],
             archived_todos: vec![],
@@ -989,6 +1023,7 @@ mod tests {
                 tomorrow_planning_unlock_hour: 20,
                 ..Settings::default()
             },
+            events: vec![],
         };
 
         let json_str = serde_json::to_string(&envelope).unwrap();
@@ -1011,6 +1046,95 @@ mod tests {
         let groups = db::get_tag_groups(&conn).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "Priority");
+    }
+
+    #[test]
+    fn import_export_roundtrip_preserves_events() {
+        let conn = test_conn();
+
+        let todo = Todo {
+            id: "evt-todo".into(),
+            title: "Eventful".into(),
+            completed: false,
+            tag_ids: vec!["tg1".into()],
+            difficulty: 3,
+            time_slots: vec![],
+            reminder_mins_before: Some(15),
+            target_date: "2026-03-19".into(),
+            order: 1.0,
+            created_at: 1710000000000.0,
+            subtasks: vec![],
+            duration_days: 1,
+            completed_day_keys: vec![],
+            archived_day_keys: vec![],
+            outgoing_relations: vec![],
+            history_date: None,
+            history_source_todo_id: None,
+            history_kind: None,
+        };
+
+        let envelope = ExportEnvelope {
+            version: "3.0".into(),
+            exported_at: "2026-03-19T09:20:00Z".into(),
+            todos: vec![todo],
+            archived_todos: vec![],
+            tags: vec![Tag {
+                id: "tg1".into(),
+                name: "Work".into(),
+                color: "#6366f1".into(),
+                group_id: None,
+            }],
+            tag_groups: vec![],
+            settings: Settings::default(),
+            events: vec![
+                TinyEvent {
+                    id: "evt-1".into(),
+                    todo_id: "evt-todo".into(),
+                    event_type: EventType::Created,
+                    field: None,
+                    old_value: None,
+                    new_value: Some(serde_json::json!({
+                        "title": "Eventful",
+                        "difficulty": 3
+                    })),
+                    timestamp: 1710000000000.0,
+                },
+                TinyEvent {
+                    id: "evt-2".into(),
+                    todo_id: "evt-todo".into(),
+                    event_type: EventType::DifficultyChanged,
+                    field: Some("difficulty".into()),
+                    old_value: Some(serde_json::json!(3)),
+                    new_value: Some(serde_json::json!(4)),
+                    timestamp: 1710000005000.0,
+                },
+            ],
+        };
+
+        let json_str = serde_json::to_string(&envelope).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        import_json_to_db(&conn, &parsed).unwrap();
+
+        let events = db::get_all_events(&conn).unwrap();
+        assert_eq!(events.len(), 2);
+
+        let created = events.iter().find(|event| event.id == "evt-1").unwrap();
+        assert_eq!(created.todo_id, "evt-todo");
+        assert_eq!(created.event_type, EventType::Created);
+        assert_eq!(
+            created.new_value,
+            Some(serde_json::json!({
+                "title": "Eventful",
+                "difficulty": 3
+            }))
+        );
+
+        let difficulty_changed = events.iter().find(|event| event.id == "evt-2").unwrap();
+        assert_eq!(difficulty_changed.event_type, EventType::DifficultyChanged);
+        assert_eq!(difficulty_changed.field.as_deref(), Some("difficulty"));
+        assert_eq!(difficulty_changed.old_value, Some(serde_json::json!(3)));
+        assert_eq!(difficulty_changed.new_value, Some(serde_json::json!(4)));
+        assert!(difficulty_changed.timestamp > created.timestamp);
     }
 
     // ── Dirty data tolerance ──────────────────────────────────────────

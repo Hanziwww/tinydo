@@ -347,6 +347,27 @@ export function SettingsPanel() {
       </div>
       <div>
         <label className="mb-2.5 block text-[15px] font-medium text-text-2">
+          {t("settings.event_debounce", locale)}
+        </label>
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            min={1}
+            max={60}
+            value={useSettingsStore.getState().eventDebounceSeconds}
+            onChange={(e) =>
+              useSettingsStore.getState().setEventDebounceSeconds(Number(e.target.value))
+            }
+            className="w-20 border border-border bg-surface-2 px-3 py-2.5 text-[16px] text-text-1 outline-none focus:border-accent"
+          />
+          <span className="text-[15px] text-text-3">
+            {t("settings.event_debounce.unit", locale)}
+          </span>
+        </div>
+        <p className="mt-2 text-[15px] text-text-3">{t("settings.event_debounce.desc", locale)}</p>
+      </div>
+      <div>
+        <label className="mb-2.5 block text-[15px] font-medium text-text-2">
           {t("settings.export", locale)}
         </label>
         <div className="flex gap-2">
