@@ -25,6 +25,33 @@ struct Args {
     db_path: String,
 }
 
+fn get_local_ip() -> String {
+    local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+fn get_public_ip() -> String {
+    std::net::TcpStream::connect_timeout(
+        &"api4.ipify.org:80".parse().unwrap(),
+        std::time::Duration::from_secs(3),
+    )
+    .ok()
+    .and_then(|mut stream| {
+        use std::io::{Read, Write};
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: api4.ipify.org\r\nConnection: close\r\n\r\n")
+            .ok()?;
+        let mut buf = String::new();
+        stream.read_to_string(&mut buf).ok()?;
+        buf.rsplit("\r\n\r\n")
+            .next()
+            .map(|body| body.trim().to_string())
+    })
+    .filter(|ip| !ip.is_empty())
+    .unwrap_or_else(|| "unavailable".into())
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -34,6 +61,16 @@ async fn main() {
     log::info!("tinydo-sync v{} starting up", env!("CARGO_PKG_VERSION"));
     log::info!("  database: {}", args.db_path);
     log::info!("  port:     {}", args.port);
+
+    let local_ip = get_local_ip();
+    let public_ip = get_public_ip();
+
+    log::info!("  LAN:      http://{}:{}", local_ip, args.port);
+    if public_ip != "unavailable" {
+        log::info!("  WAN:      http://{}:{}", public_ip, args.port);
+    } else {
+        log::info!("  WAN:      (could not detect public IP)");
+    }
 
     let conn = db::init_db(&args.db_path);
     log::info!("Database initialized");

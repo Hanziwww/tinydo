@@ -9,12 +9,12 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.0.0-blue?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-3.0.1-blue?style=flat-square" />
   <img alt="Tauri v2" src="https://img.shields.io/badge/Tauri-v2-24C8D8?style=flat-square&logo=tauri&logoColor=white" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?style=flat-square&logo=typescript&logoColor=white" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4?style=flat-square" />
 </p>
 
 <p align="center">
@@ -27,17 +27,50 @@
 
 ## Download
 
-Grab the latest installer from the [**Releases**](https://github.com/Hanziwww/tinydo/releases) page — no build tools required.
+Grab the latest installer from the [**Releases**](https://github.com/Hanziwww/tinydo/releases) page:
 
-## What's New in v2.0
+| Platform | File |
+|----------|------|
+| Windows  | `TinyDo_x.x.x_x64-setup.exe` (NSIS) |
+| macOS    | `TinyDo_x.x.x_aarch64.dmg` |
+| Linux    | `TinyDo_x.x.x_amd64.AppImage` / `.deb` |
 
-- **SQLite persistence** — Data is now stored in a local SQLite database instead of localStorage, removing the ~5 MB size limit and improving reliability. Existing v1 data is automatically migrated on first launch.
-- **Rust-powered reminders** — Reminder scheduling moved from JS polling (every 15 s) to precise `tokio` timers in Rust, working reliably even when the window is minimized.
-- **Rust-side file I/O** — Export, import, and poster saving now run entirely in Rust for better performance and security. The CRC32/pHYs PNG logic has been moved out of JS.
-- **Global shortcut** — Press `Ctrl+Shift+T` anywhere to toggle the TinyDo window.
-- **Launch at startup** — Optional auto-start on system login, configurable in Settings.
-- **Security hardening** — Content Security Policy enabled, frontend filesystem permissions removed (all I/O goes through Rust invoke commands).
-- **Structured error handling** — Unified `AppError` type with `thiserror`, plus file-based logging via `tauri-plugin-log`.
+## What's New in v3.0
+
+- **Cross-device sync** — Optional sync via a self-hosted sync server. Pair devices with a shared sync key, no account needed.
+- **End-to-end encryption** — All synced data is encrypted client-side with AES-256-GCM (key derived from the sync key via Argon2id). The server never sees plaintext.
+- **Conflict resolution** — When the same item is modified on two devices, a dialog shows both versions and lets you choose which to keep.
+- **Self-hosted sync server** — Standalone binary (`tinydo-sync`) with SQLite storage. Single file, zero config, just run it.
+- **Event tracking** — Every task change is recorded in an event log with human-readable descriptions.
+- **Completion prediction** — Predicts on-time completion probability based on your historical patterns.
+- **Task relations** — Link tasks with depends-on / blocks / related-to relationships.
+- **Multi-day tasks** — Tasks can span up to 5 days with per-day completion tracking.
+- **History & archive** — Browse completed and archived tasks by date.
+- **Multi-platform builds** — GitHub Actions CI produces installers for Windows, macOS, and Linux on every release.
+
+## Sync Server
+
+TinyDo Sync is an optional, self-hosted server for syncing data across devices.
+
+### Quick Start
+
+1. Download `tinydo-sync` from the [Releases](https://github.com/Hanziwww/tinydo/releases) page (Windows `.exe` or Linux binary).
+2. Run it:
+
+```bash
+./tinydo-sync --port 8745
+```
+
+3. In TinyDo, go to **Settings → Data Sync**, enter the server address and a sync key.
+4. Use the same sync key on all devices you want to sync.
+
+### Server Options
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--port` | `TINYDO_SYNC_PORT` | `8745` | Listen port |
+| `--db-path` | `TINYDO_SYNC_DB` | `./tinydo-sync.db` | SQLite database path |
+| `--version` | — | — | Print version and exit |
 
 ## Getting Started
 
@@ -66,7 +99,13 @@ npm run tauri dev
 npm run tauri build
 ```
 
-The installer will be generated in `src-tauri/target/release/bundle/nsis/`.
+### Build the Sync Server
+
+```bash
+cd sync-server
+cargo build --release
+# Binary: target/release/tinydo-sync(.exe)
+```
 
 ## Architecture
 
@@ -75,7 +114,7 @@ tinydo/
 ├── public/                     # Static assets (icons, poster)
 ├── src/                        # Frontend (React + TypeScript)
 │   ├── components/             # React UI components
-│   ├── hooks/                  # Custom React hooks
+│   │   └── sync/               # Sync settings, conflict dialog, indicator
 │   ├── i18n/                   # Internationalization (zh / en)
 │   ├── lib/
 │   │   ├── backend.ts          # Typed invoke() wrappers for all Rust commands
@@ -94,14 +133,20 @@ tinydo/
 │   │   ├── models.rs           # Serde data models (mirrors TS types)
 │   │   ├── error.rs            # AppError enum (thiserror)
 │   │   ├── db.rs               # SQLite schema, connection, CRUD operations
+│   │   ├── predict.rs          # Completion prediction engine
 │   │   ├── reminders.rs        # Tokio-based reminder scheduler
+│   │   ├── sync/               # Sync module (client, crypto, engine, models)
 │   │   └── commands/           # Tauri invoke command handlers
-│   │       ├── todos.rs        # Todo CRUD commands
-│   │       ├── tags.rs         # Tag & tag group commands
-│   │       ├── settings.rs     # Settings & legacy migration commands
-│   │       └── export.rs       # Export/import/poster file I/O
 │   ├── capabilities/           # Tauri permission definitions
 │   └── Cargo.toml              # Rust dependencies
+├── sync-server/                # Self-hosted sync server (Rust)
+│   ├── src/
+│   │   ├── main.rs             # Server entry (Axum + clap)
+│   │   ├── db.rs               # Server-side SQLite (sync groups, devices, changes)
+│   │   ├── routes.rs           # REST API handlers
+│   │   └── models.rs           # Request/response types
+│   └── Cargo.toml
+├── .github/workflows/          # CI (multi-platform test) & Release (3-platform build)
 ├── package.json
 └── README.md
 ```

@@ -5,6 +5,7 @@ import { t } from "@/i18n";
 import { useEventStore } from "@/stores/eventStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTagStore } from "@/stores/tagStore";
+import { useTodoStore } from "@/stores/todoStore";
 import * as backend from "@/lib/backend";
 import type { TinyEvent, EventType, Locale } from "@/types";
 
@@ -56,6 +57,7 @@ function formatEventValue(
   value: unknown,
   eventType: EventType,
   tagNameMap: Map<string, string>,
+  todoTitleMap: Map<string, string>,
   locale: Locale,
 ): string | null {
   if (value === null || value === undefined) return null;
@@ -70,8 +72,13 @@ function formatEventValue(
   ) {
     const obj = value as Record<string, unknown>;
     const relType = obj.relationType as string | undefined;
-    const label = relType ? t(`relation.short.${relType}`, locale) : "";
-    return label || JSON.stringify(value);
+    const targetId = obj.targetTaskId as string | undefined;
+    const relLabel = relType ? t(`relation.short.${relType}`, locale) : "";
+    const targetLabel = targetId ? (todoTitleMap.get(targetId) ?? targetId.slice(0, 8)) : "";
+    if (relLabel && targetLabel) return `${relLabel}: ${targetLabel}`;
+    if (relLabel) return relLabel;
+    if (targetLabel) return targetLabel;
+    return JSON.stringify(value);
   }
 
   if (
@@ -104,7 +111,9 @@ function ValueDisplay({ value, label }: { value: string | null; label: string })
 
 function EventRow({ event, locale }: { event: TinyEvent; locale: Locale }) {
   const tags = useTagStore((s) => s.tags);
+  const todos = useTodoStore((s) => s.todos);
   const tagNameMap = new Map(tags.map((tg) => [tg.id, tg.name]));
+  const todoTitleMap = new Map(todos.map((td) => [td.id, td.title]));
   const dotColor =
     (EVENT_DOT_COLORS as Record<string, string | undefined>)[event.eventType] ??
     "var(--color-text-3)";
@@ -128,11 +137,23 @@ function EventRow({ event, locale }: { event: TinyEvent; locale: Locale }) {
         {(event.oldValue !== null || event.newValue !== null) && (
           <div className="mt-2 flex flex-wrap gap-2">
             <ValueDisplay
-              value={formatEventValue(event.oldValue, event.eventType, tagNameMap, locale)}
+              value={formatEventValue(
+                event.oldValue,
+                event.eventType,
+                tagNameMap,
+                todoTitleMap,
+                locale,
+              )}
               label="←"
             />
             <ValueDisplay
-              value={formatEventValue(event.newValue, event.eventType, tagNameMap, locale)}
+              value={formatEventValue(
+                event.newValue,
+                event.eventType,
+                tagNameMap,
+                todoTitleMap,
+                locale,
+              )}
               label="→"
             />
           </div>
