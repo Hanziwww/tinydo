@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
@@ -11,6 +11,24 @@ use serde::Deserialize;
 
 use crate::db::{self, AppState};
 use crate::models::*;
+
+fn mask_key(key: &str) -> String {
+    if key.len() <= 6 {
+        return "***".to_string();
+    }
+    format!("{}...", &key[..6])
+}
+
+fn db_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<ErrorResponse>) {
+    log::error!("[DB] {e}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            code: "DB_ERROR".into(),
+            message: e.to_string(),
+        }),
+    )
+}
 
 fn extract_sync_key(headers: &HeaderMap) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     headers
@@ -29,6 +47,13 @@ fn extract_sync_key(headers: &HeaderMap) -> Result<String, (StatusCode, Json<Err
         })
 }
 
+pub async fn health() -> impl IntoResponse {
+    Json(HealthResponse {
+        status: "ok".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    })
+}
+
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
@@ -39,6 +64,14 @@ pub async fn register(
     db::upsert_device(&conn, &req.device_id, &req.sync_key, &req.device_name);
 
     let version = db::get_current_version(&conn, &req.sync_key);
+
+    log::info!(
+        "[REGISTER] device \"{}\" ({}) joined sync group \"{}\" at version {}",
+        req.device_id,
+        req.device_name,
+        mask_key(&req.sync_key),
+        version
+    );
 
     Json(RegisterResponse {
         sync_key: req.sync_key,
@@ -57,12 +90,14 @@ pub async fn push_changes(
 
     db::touch_device(&conn, &req.device_id);
 
-    let mut current_version = db::get_current_version(&conn, &sync_key);
+    let start_version = db::get_current_version(&conn, &sync_key);
+    let mut current_version = start_version;
     let accepted = req.changes.len();
 
+    let tx = conn.unchecked_transaction().map_err(db_err)?;
     for change in &req.changes {
         current_version += 1;
-        conn.execute(
+        tx.execute(
             "INSERT INTO change_log (sync_key, device_id, entity_type, entity_id, action, encrypted, nonce, version, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
@@ -77,16 +112,18 @@ pub async fn push_changes(
                 change.timestamp,
             ],
         )
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    code: "DB_ERROR".into(),
-                    message: e.to_string(),
-                }),
-            )
-        })?;
+        .map_err(db_err)?;
     }
+    tx.commit().map_err(db_err)?;
+
+    log::info!(
+        "[PUSH] device \"{}\" pushed {} changes (version {} -> {}) for sync group \"{}\"",
+        req.device_id,
+        accepted,
+        start_version,
+        current_version,
+        mask_key(&sync_key)
+    );
 
     Ok(Json(PushChangesResponse {
         version: current_version,
@@ -115,15 +152,7 @@ pub async fn pull_changes(
              WHERE sync_key = ?1 AND version > ?2
              ORDER BY version ASC",
         )
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    code: "DB_ERROR".into(),
-                    message: e.to_string(),
-                }),
-            )
-        })?;
+        .map_err(db_err)?;
 
     let changes: Vec<StoredChange> = stmt
         .query_map(params![sync_key, since], |row| {
@@ -139,19 +168,19 @@ pub async fn pull_changes(
                 timestamp: row.get(8)?,
             })
         })
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    code: "DB_ERROR".into(),
-                    message: e.to_string(),
-                }),
-            )
-        })?
+        .map_err(db_err)?
         .filter_map(|r| r.ok())
         .collect();
 
     let current_version = db::get_current_version(&conn, &sync_key);
+
+    log::info!(
+        "[PULL] sync group \"{}\" returned {} changes since version {} (current: {})",
+        mask_key(&sync_key),
+        changes.len(),
+        since,
+        current_version
+    );
 
     Ok(Json(PullChangesResponse {
         changes,
@@ -184,15 +213,21 @@ pub async fn upload_snapshot(
             now
         ],
     )
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                code: "DB_ERROR".into(),
-                message: e.to_string(),
-            }),
-        )
-    })?;
+    .map_err(db_err)?;
+
+    let pruned = db::prune_old_snapshots(&conn, &sync_key, 3);
+
+    log::info!(
+        "[SNAPSHOT] device \"{}\" uploaded snapshot version {} for sync group \"{}\"{}",
+        req.device_id,
+        version,
+        mask_key(&sync_key),
+        if pruned > 0 {
+            format!(" (pruned {} old snapshots)", pruned)
+        } else {
+            String::new()
+        }
+    );
 
     Ok(Json(SnapshotResponse {
         version,
@@ -229,15 +264,22 @@ pub async fn get_latest_snapshot(
     );
 
     match result {
-        Ok(snapshot) => Ok(Json(Some(snapshot))),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Json(None)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                code: "DB_ERROR".into(),
-                message: e.to_string(),
-            }),
-        )),
+        Ok(snapshot) => {
+            log::info!(
+                "[SNAPSHOT] fetched latest snapshot (version {}) for sync group \"{}\"",
+                snapshot.version,
+                mask_key(&sync_key)
+            );
+            Ok(Json(Some(snapshot)))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            log::info!(
+                "[SNAPSHOT] no snapshot found for sync group \"{}\"",
+                mask_key(&sync_key)
+            );
+            Ok(Json(None))
+        }
+        Err(e) => Err(db_err(e)),
     }
 }
 
@@ -252,15 +294,7 @@ pub async fn status(
 
     let mut stmt = conn
         .prepare("SELECT device_id, device_name, last_seen FROM devices WHERE sync_key = ?1")
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    code: "DB_ERROR".into(),
-                    message: e.to_string(),
-                }),
-            )
-        })?;
+        .map_err(db_err)?;
 
     let devices: Vec<DeviceInfo> = stmt
         .query_map(params![sync_key], |row| {
@@ -270,21 +304,67 @@ pub async fn status(
                 last_seen: row.get(2)?,
             })
         })
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    code: "DB_ERROR".into(),
-                    message: e.to_string(),
-                }),
-            )
-        })?
+        .map_err(db_err)?
         .filter_map(|r| r.ok())
         .collect();
+
+    log::info!(
+        "[STATUS] sync group \"{}\": version {}, {} devices",
+        mask_key(&sync_key),
+        current_version,
+        devices.len()
+    );
 
     Ok(Json(StatusResponse {
         sync_key,
         current_version,
         devices,
     }))
+}
+
+pub async fn cleanup(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<CleanupRequest>,
+) -> Result<Json<CleanupResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let sync_key = extract_sync_key(&headers)?;
+    let conn = state.db.lock().unwrap();
+
+    let removed = db::cleanup_old_changes(&conn, &sync_key, req.before_version);
+
+    log::info!(
+        "[CLEANUP] removed {} old changes (before version {}) for sync group \"{}\"",
+        removed,
+        req.before_version,
+        mask_key(&sync_key)
+    );
+
+    Ok(Json(CleanupResponse { removed }))
+}
+
+pub async fn delete_device(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(device_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let sync_key = extract_sync_key(&headers)?;
+    let conn = state.db.lock().unwrap();
+
+    let removed = db::delete_device(&conn, &device_id);
+
+    if removed > 0 {
+        log::info!(
+            "[DEVICE] removed device \"{}\" from sync group \"{}\"",
+            device_id,
+            mask_key(&sync_key)
+        );
+    } else {
+        log::warn!(
+            "[DEVICE] device \"{}\" not found in sync group \"{}\"",
+            device_id,
+            mask_key(&sync_key)
+        );
+    }
+
+    Ok(Json(serde_json::json!({ "removed": removed > 0 })))
 }

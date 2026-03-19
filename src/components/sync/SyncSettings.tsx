@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw, Unplug, Copy, Key } from "lucide-react";
 import { t } from "@/i18n";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -19,9 +19,20 @@ export function SyncSettings() {
   const generateKey = useSyncStore((s) => s.generateKey);
   const triggerSync = useSyncStore((s) => s.triggerSync);
 
-  const [inputUrl, setInputUrl] = useState(serverUrl || "");
-  const [inputKey, setInputKey] = useState("");
+  const prevServerUrl = useSyncStore((s) => s.prevServerUrl);
+  const prevSyncKey = useSyncStore((s) => s.prevSyncKey);
+
+  const [inputUrl, setInputUrl] = useState(serverUrl || prevServerUrl || "");
+  const [inputKey, setInputKey] = useState(prevSyncKey || "");
   const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    if (!configured && prevServerUrl && !inputUrl) setInputUrl(prevServerUrl);
+  }, [configured, prevServerUrl, inputUrl]);
+
+  useEffect(() => {
+    if (!configured && prevSyncKey && !inputKey) setInputKey(prevSyncKey);
+  }, [configured, prevSyncKey, inputKey]);
 
   const handleConnect = async () => {
     if (!inputUrl.trim() || !inputKey.trim()) return;
@@ -157,6 +168,9 @@ export function SyncSettings() {
               </button>
             </div>
           </div>
+          {(prevServerUrl || prevSyncKey) && (
+            <p className="text-[12px] text-text-3">{t("sync.prev_config", locale)}</p>
+          )}
           <button
             type="button"
             onClick={handleConnect}

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useEventStore } from "@/stores/eventStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useTagStore } from "@/stores/tagStore";
 import * as backend from "@/lib/backend";
 import type { TinyEvent, EventType, Locale } from "@/types";
 
@@ -51,19 +52,59 @@ function formatTimestamp(ts: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 }
 
-function ValueDisplay({ value, label }: { value: unknown; label: string }) {
+function formatEventValue(
+  value: unknown,
+  eventType: EventType,
+  tagNameMap: Map<string, string>,
+  locale: Locale,
+): string | null {
   if (value === null || value === undefined) return null;
-  const str =
-    typeof value === "object" ? JSON.stringify(value) : `${value as string | number | boolean}`;
+
+  if ((eventType === "tagAdded" || eventType === "tagRemoved") && typeof value === "string") {
+    return tagNameMap.get(value) ?? value;
+  }
+
+  if (
+    (eventType === "relationAdded" || eventType === "relationRemoved") &&
+    typeof value === "object"
+  ) {
+    const obj = value as Record<string, unknown>;
+    const relType = obj.relationType as string | undefined;
+    const label = relType ? t(`relation.short.${relType}`, locale) : "";
+    return label || JSON.stringify(value);
+  }
+
+  if (
+    (eventType === "subtaskAdded" ||
+      eventType === "subtaskRemoved" ||
+      eventType === "subtaskRenamed" ||
+      eventType === "subtaskToggled") &&
+    typeof value === "object"
+  ) {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.title === "string") return obj.title;
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return `${value as string | number | boolean}`;
+}
+
+function ValueDisplay({ value, label }: { value: string | null; label: string }) {
+  if (!value) return null;
   return (
     <span className="inline-flex items-center gap-1.5 rounded bg-surface-3/60 px-2 py-1 text-[12px] text-text-2">
       <span className="text-text-3">{label}</span>
-      <span className="max-w-[180px] truncate font-medium">{str}</span>
+      <span className="max-w-[180px] truncate font-medium">{value}</span>
     </span>
   );
 }
 
 function EventRow({ event, locale }: { event: TinyEvent; locale: Locale }) {
+  const tags = useTagStore((s) => s.tags);
+  const tagNameMap = new Map(tags.map((tg) => [tg.id, tg.name]));
   const dotColor =
     (EVENT_DOT_COLORS as Record<string, string | undefined>)[event.eventType] ??
     "var(--color-text-3)";
@@ -86,8 +127,14 @@ function EventRow({ event, locale }: { event: TinyEvent; locale: Locale }) {
         <div className="mt-1 text-[13px] text-text-3">{formatTimestamp(event.timestamp)}</div>
         {(event.oldValue !== null || event.newValue !== null) && (
           <div className="mt-2 flex flex-wrap gap-2">
-            <ValueDisplay value={event.oldValue} label="←" />
-            <ValueDisplay value={event.newValue} label="→" />
+            <ValueDisplay
+              value={formatEventValue(event.oldValue, event.eventType, tagNameMap, locale)}
+              label="←"
+            />
+            <ValueDisplay
+              value={formatEventValue(event.newValue, event.eventType, tagNameMap, locale)}
+              label="→"
+            />
           </div>
         )}
       </div>

@@ -71,6 +71,7 @@ pub fn run() {
             sync::sync_full,
             sync::sync_get_status,
             sync::sync_disconnect,
+            sync::sync_get_last_config,
             sync::sync_resolve_conflict,
         ])
         .setup(|app| {

@@ -16,6 +16,8 @@ interface SyncStoreState {
   syncError: string | null;
   conflicts: ConflictEntry[];
   showConflictDialog: boolean;
+  prevServerUrl: string;
+  prevSyncKey: string;
 
   hydrate: () => Promise<void>;
   configure: (serverUrl: string, syncKey: string) => Promise<void>;
@@ -38,6 +40,8 @@ export const useSyncStore = create<SyncStoreState>()((set, get) => ({
   syncError: null,
   conflicts: [],
   showConflictDialog: false,
+  prevServerUrl: "",
+  prevSyncKey: "",
 
   hydrate: async () => {
     try {
@@ -50,6 +54,14 @@ export const useSyncStore = create<SyncStoreState>()((set, get) => ({
         lastSyncTime: status.lastSyncTime,
         deviceCount: status.deviceCount,
       });
+
+      if (!status.configured) {
+        const last = await backend.syncGetLastConfig();
+        set({
+          prevServerUrl: last.serverUrl,
+          prevSyncKey: last.syncKey,
+        });
+      }
     } catch {
       // Not configured yet
     }
@@ -70,6 +82,7 @@ export const useSyncStore = create<SyncStoreState>()((set, get) => ({
   },
 
   disconnect: async () => {
+    const { serverUrl, syncKey } = get();
     await backend.syncDisconnect();
     set({
       configured: false,
@@ -83,6 +96,8 @@ export const useSyncStore = create<SyncStoreState>()((set, get) => ({
       syncError: null,
       conflicts: [],
       showConflictDialog: false,
+      prevServerUrl: serverUrl,
+      prevSyncKey: syncKey,
     });
   },
 

@@ -235,6 +235,15 @@ export function syncDisconnect(): Promise<void> {
   return invoke("sync_disconnect");
 }
 
+export interface LastSyncConfig {
+  serverUrl: string;
+  syncKey: string;
+}
+
+export function syncGetLastConfig(): Promise<LastSyncConfig> {
+  return invoke<LastSyncConfig>("sync_get_last_config");
+}
+
 export function syncResolveConflict(
   resolution: ConflictResolution,
   remoteData: string,

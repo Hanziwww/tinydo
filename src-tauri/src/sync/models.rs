@@ -73,6 +73,13 @@ pub struct SyncResult {
     pub new_version: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastSyncConfig {
+    pub server_url: String,
+    pub sync_key: String,
+}
+
 // Server API request/response types (mirroring sync-server models)
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

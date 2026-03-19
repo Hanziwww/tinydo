@@ -60,7 +60,6 @@ pub fn init_db(db_path: &str) -> Connection {
     )
     .expect("Failed to create tables");
 
-    log::info!("Sync database initialized at {db_path}");
     conn
 }
 
@@ -105,6 +104,41 @@ pub fn touch_device(conn: &Connection, device_id: &str) {
     .ok();
 }
 
+pub fn delete_device(conn: &Connection, device_id: &str) -> usize {
+    conn.execute(
+        "DELETE FROM devices WHERE device_id = ?1",
+        params![device_id],
+    )
+    .unwrap_or(0)
+}
+
+pub fn cleanup_old_changes(conn: &Connection, sync_key: &str, before_version: i64) -> usize {
+    conn.execute(
+        "DELETE FROM change_log WHERE sync_key = ?1 AND version <= ?2",
+        params![sync_key, before_version],
+    )
+    .unwrap_or(0)
+}
+
+pub fn cleanup_stale_changes(conn: &Connection, max_age_secs: i64) -> usize {
+    let cutoff = now_unix() - max_age_secs;
+    conn.execute(
+        "DELETE FROM change_log WHERE timestamp < ?1",
+        params![cutoff],
+    )
+    .unwrap_or(0)
+}
+
+pub fn prune_old_snapshots(conn: &Connection, sync_key: &str, keep: i64) -> usize {
+    conn.execute(
+        "DELETE FROM snapshots WHERE sync_key = ?1 AND id NOT IN (
+            SELECT id FROM snapshots WHERE sync_key = ?1 ORDER BY version DESC LIMIT ?2
+         )",
+        params![sync_key, keep],
+    )
+    .unwrap_or(0)
+}
+
 #[cfg(test)]
 pub fn init_memory_db() -> Connection {
     let conn = Connection::open_in_memory().expect("Failed to open in-memory db");
@@ -144,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn device_registration() {
+    fn device_registration_and_delete() {
         let conn = init_memory_db();
         ensure_sync_group(&conn, "key1");
         upsert_device(&conn, "dev1", "key1", "My PC");
@@ -167,6 +201,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name2, "New Name");
+
+        assert_eq!(delete_device(&conn, "dev1"), 1);
+        assert_eq!(delete_device(&conn, "dev1"), 0);
     }
 
     #[test]
@@ -189,5 +226,41 @@ mod tests {
         assert_eq!(get_current_version(&conn, "key1"), 5);
 
         assert_eq!(get_current_version(&conn, "other-key"), 0);
+    }
+
+    #[test]
+    fn cleanup_old_changes_works() {
+        let conn = init_memory_db();
+        for v in 1..=5 {
+            conn.execute(
+                "INSERT INTO change_log (sync_key, device_id, entity_type, entity_id, action, encrypted, nonce, version, timestamp)
+                 VALUES ('k1', 'dev1', 'todo', 't1', 'upsert', 'enc', 'non', ?1, ?2)",
+                params![v, now_unix()],
+            ).unwrap();
+        }
+        assert_eq!(cleanup_old_changes(&conn, "k1", 3), 3);
+        assert_eq!(get_current_version(&conn, "k1"), 5);
+    }
+
+    #[test]
+    fn prune_old_snapshots_works() {
+        let conn = init_memory_db();
+        ensure_sync_group(&conn, "k1");
+        for v in 1..=5 {
+            conn.execute(
+                "INSERT INTO snapshots (sync_key, device_id, encrypted, nonce, version, created_at) VALUES ('k1', 'dev1', 'enc', 'non', ?1, ?2)",
+                params![v, now_unix()],
+            ).unwrap();
+        }
+        let pruned = prune_old_snapshots(&conn, "k1", 3);
+        assert_eq!(pruned, 2);
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM snapshots WHERE sync_key = 'k1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 3);
     }
 }

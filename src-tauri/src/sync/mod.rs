@@ -307,10 +307,40 @@ pub fn sync_disconnect(app: AppHandle) -> Result<(), AppError> {
     let db = app.state::<DbState>();
     let conn = db.0.lock().unwrap();
 
-    conn.execute("DELETE FROM sync_state", [])?;
+    if let Some(url) = get_sync_meta(&conn, "server_url") {
+        set_sync_meta(&conn, "prev_server_url", &url);
+    }
+    if let Some(key) = get_sync_meta(&conn, "sync_key") {
+        set_sync_meta(&conn, "prev_sync_key", &key);
+    }
+
+    for key in &[
+        "server_url",
+        "sync_key",
+        "device_id",
+        "device_name",
+        "last_sync_version",
+        "last_sync_time",
+    ] {
+        conn.execute(
+            "DELETE FROM sync_state WHERE key = ?1",
+            rusqlite::params![key],
+        )?;
+    }
     conn.execute("DELETE FROM local_changes", [])?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn sync_get_last_config(app: AppHandle) -> Result<LastSyncConfig, AppError> {
+    let db = app.state::<DbState>();
+    let conn = db.0.lock().unwrap();
+
+    Ok(LastSyncConfig {
+        server_url: get_sync_meta(&conn, "prev_server_url").unwrap_or_default(),
+        sync_key: get_sync_meta(&conn, "prev_sync_key").unwrap_or_default(),
+    })
 }
 
 #[tauri::command]

@@ -309,6 +309,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "sync.conflict.remote": "使用远程",
     "sync.conflict.entity": "{type} - {id}",
     "sync.desc": "通过自建同步服务器在多台设备间同步数据，端到端加密",
+    "sync.prev_config": "已自动填入上次使用的连接信息",
   },
   en: {
     "app.greeting": "{name}, what to do today?",
@@ -627,6 +628,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "sync.conflict.remote": "Use Remote",
     "sync.conflict.entity": "{type} - {id}",
     "sync.desc": "Sync data across devices via self-hosted server with end-to-end encryption",
+    "sync.prev_config": "Pre-filled with your last connection",
   },
 };
 

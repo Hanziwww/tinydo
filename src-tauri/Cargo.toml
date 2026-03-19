@@ -1,6 +1,6 @@
 [package]
 name = "tinydo"
-version = "3.0.0"
+version = "3.0.1"
 description = "A lightweight, elegant desktop to-do app"
 authors = ["Hanzi"]
 edition = "2021"
