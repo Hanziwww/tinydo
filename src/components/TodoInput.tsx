@@ -1,12 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import { Hash, Lock, Plus } from "lucide-react";
 import { cn, formatHourLabel } from "@/lib/utils";
+import { isMobile } from "@/lib/platform";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { TagBadge } from "@/components/TagBadge";
 import type { PlanningBoard, Tag } from "@/types";
+
+const mobile = isMobile();
 
 interface Props {
   board: PlanningBoard;
@@ -30,14 +33,15 @@ export function TodoInput({ board, targetDate, disabled = false, focusSignal = 0
   const addTag = useTagStore((s) => s.addTag);
 
   useEffect(() => {
-    const h = (e: MouseEvent) => {
+    const h = (e: PointerEvent) => {
       if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowPicker(false);
     };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    document.addEventListener("pointerdown", h);
+    return () => document.removeEventListener("pointerdown", h);
   }, []);
 
   useEffect(() => {
+    if (mobile) return;
     if (!disabled) inputRef.current?.focus();
   }, [disabled, focusSignal]);
 
@@ -58,13 +62,13 @@ export function TodoInput({ board, targetDate, disabled = false, focusSignal = 0
     );
     setTitle("");
     setSel([]);
-    inputRef.current?.focus();
+    if (!mobile) inputRef.current?.focus();
   }
   function pick(tag: Tag) {
     setSel((p) => [...p, tag]);
     setSearch("");
     setShowPicker(false);
-    inputRef.current?.focus();
+    if (!mobile) inputRef.current?.focus();
   }
 
   if (disabled) {
@@ -80,7 +84,8 @@ export function TodoInput({ board, targetDate, disabled = false, focusSignal = 0
     <form onSubmit={submit}>
       <div
         className={cn(
-          "flex items-center gap-3 border bg-surface-1 px-4 py-1.5 transition-all",
+          "flex items-center gap-3 border bg-surface-1 px-4 transition-all",
+          mobile ? "py-2.5" : "py-1.5",
           "border-border focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20",
         )}
       >
@@ -104,14 +109,20 @@ export function TodoInput({ board, targetDate, disabled = false, focusSignal = 0
                 ? t("todo.placeholder.today", locale)
                 : t("todo.placeholder.tomorrow", locale)
             }
-            className="min-w-[180px] flex-1 bg-transparent text-[14px] text-text-1 outline-none placeholder:text-text-3"
+            className={cn(
+              "min-w-[120px] flex-1 bg-transparent text-text-1 outline-none placeholder:text-text-3",
+              mobile ? "text-[15px]" : "text-[14px]",
+            )}
           />
         </div>
         <div className="relative" ref={pickerRef}>
           <button
             type="button"
             onClick={() => setShowPicker(!showPicker)}
-            className="p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-2"
+            className={cn(
+              "text-text-3 transition-colors hover:bg-surface-2 hover:text-text-2",
+              mobile ? "p-2" : "p-1.5",
+            )}
           >
             <Hash size={16} />
           </button>
@@ -142,7 +153,10 @@ export function TodoInput({ board, targetDate, disabled = false, focusSignal = 0
                     key={tg.id}
                     type="button"
                     onClick={() => pick(tg)}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-[16px] text-text-1 transition-colors hover:bg-surface-2"
+                    className={cn(
+                      "flex w-full items-center gap-3 text-left text-text-1 transition-colors hover:bg-surface-2",
+                      mobile ? "px-4 py-3.5 text-[16px]" : "px-4 py-3 text-[16px]",
+                    )}
                   >
                     <span className="h-3 w-3" style={{ backgroundColor: tg.color }} />
                     {tg.name}

@@ -12,8 +12,11 @@ import {
   X,
 } from "lucide-react";
 import { buildTagSections } from "@/lib/tag-sections";
+import { isMobile } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
+
+const mobile = isMobile();
 import { useTagStore } from "@/stores/tagStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -47,6 +50,7 @@ export function TagManager() {
   const [groupDraftName, setGroupDraftName] = useState("");
   const [colorPickerTagId, setColorPickerTagId] = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
+  const [tappedTagId, setTappedTagId] = useState<string | null>(null);
 
   const locale = useSettingsStore((s) => s.locale);
   const tags = useTagStore((s) => s.tags);
@@ -132,125 +136,177 @@ export function TagManager() {
   function renderTagList(tagList: Tag[], groupId?: string) {
     return (
       <div className="space-y-0.5 pl-3">
-        {tagList.map((tag) => (
-          <div
-            key={tag.id}
-            className="group/tag rounded-md border border-transparent px-2.5 py-1.5 transition-colors hover:border-border/60 hover:bg-surface-2"
-          >
-            {editingTagId === tag.id ? (
-              <div className="flex items-center gap-2">
-                <input
-                  value={tagDraftName}
-                  onChange={(e) => setTagDraftName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitTagRename(tag);
-                    if (e.key === "Escape") {
-                      setEditingTagId(null);
-                      setTagDraftName("");
-                    }
-                  }}
-                  className="min-w-0 flex-1 bg-transparent text-[15px] text-text-1 outline-none"
-                  autoFocus
-                />
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => submitTagRename(tag)}
-                    className="p-1 text-text-3 transition-colors hover:text-accent"
-                    title={t("action.save", locale)}
-                  >
-                    <Check size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingTagId(null);
-                      setTagDraftName("");
+        {tagList.map((tag) => {
+          const isTagExpanded = mobile ? tappedTagId === tag.id : false;
+          return (
+            <div
+              key={tag.id}
+              className={cn(
+                "group/tag rounded-md border border-transparent px-2.5 py-1.5 transition-colors",
+                mobile ? "active:bg-surface-2" : "hover:border-border/60 hover:bg-surface-2",
+              )}
+              onClick={mobile ? () => setTappedTagId(isTagExpanded ? null : tag.id) : undefined}
+            >
+              {editingTagId === tag.id ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    value={tagDraftName}
+                    onChange={(e) => setTagDraftName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitTagRename(tag);
+                      if (e.key === "Escape") {
+                        setEditingTagId(null);
+                        setTagDraftName("");
+                      }
                     }}
-                    className="p-1 text-text-3 transition-colors hover:text-text-1"
-                    title={t("action.cancel", locale)}
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <TagBadge tag={tag} />
-                <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out group-hover/tag:grid-rows-[1fr]">
-                  <div className="overflow-hidden">
-                    <div className="flex flex-wrap items-center gap-1.5 pt-1.5 opacity-0 transition-opacity duration-150 group-hover/tag:opacity-100">
-                      {tagGroups.length > 0 && (
-                        <select
-                          value={tag.groupId || ""}
-                          onChange={(e) =>
-                            updateTag(tag.id, {
-                              groupId: e.target.value || null,
-                            })
-                          }
-                          className="min-w-0 max-w-[140px] bg-surface-2 px-2 py-1 text-[13px] text-text-2 outline-none"
-                        >
-                          <option value="">{t("tag.ungrouped", locale)}</option>
-                          {sortedGroups.map((g) => (
-                            <option key={g.id} value={g.id}>
-                              {g.name}
-                              {g.id === groupId ? ` (${t("tag.current", locale)})` : ""}
-                            </option>
-                          ))}
-                        </select>
+                    className="min-w-0 flex-1 bg-transparent text-[15px] text-text-1 outline-none"
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        submitTagRename(tag);
+                      }}
+                      className={cn(
+                        "text-text-3 transition-colors hover:text-accent",
+                        mobile ? "p-2" : "p-1",
                       )}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setColorPickerTagId((current) => (current === tag.id ? null : tag.id))
-                        }
-                        className="p-1 text-text-3 transition-colors hover:text-accent"
-                        title={t("tag.color", locale)}
-                      >
-                        <Palette size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => startTagRename(tag)}
-                        className="p-1 text-text-3 transition-colors hover:text-accent"
-                        title={t("tag.rename", locale)}
-                      >
-                        <Pencil size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTag(tag.id)}
-                        className="p-1 text-text-3 transition-colors hover:text-danger"
-                        title={t("tag.delete", locale)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
+                      title={t("action.save", locale)}
+                    >
+                      <Check size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingTagId(null);
+                        setTagDraftName("");
+                      }}
+                      className={cn(
+                        "text-text-3 transition-colors hover:text-text-1",
+                        mobile ? "p-2" : "p-1",
+                      )}
+                      title={t("action.cancel", locale)}
+                    >
+                      <X size={13} />
+                    </button>
                   </div>
                 </div>
-              </>
-            )}
-            {colorPickerTagId === tag.id && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {COLOR_OPTIONS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => {
-                      updateTag(tag.id, { color });
-                      setColorPickerTagId(null);
-                    }}
+              ) : (
+                <>
+                  <TagBadge tag={tag} />
+                  <div
                     className={cn(
-                      "h-5 w-5 transition-transform hover:scale-110",
-                      tag.color === color && "ring-2 ring-white/50",
+                      "grid transition-[grid-template-rows] duration-200 ease-out",
+                      mobile
+                        ? isTagExpanded
+                          ? "grid-rows-[1fr]"
+                          : "grid-rows-[0fr]"
+                        : "grid-rows-[0fr] group-hover/tag:grid-rows-[1fr]",
                     )}
-                    style={{ backgroundColor: color }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+                  >
+                    <div className="overflow-hidden">
+                      <div
+                        className={cn(
+                          "flex flex-wrap items-center gap-1.5 pt-1.5 transition-opacity duration-150",
+                          mobile
+                            ? isTagExpanded
+                              ? "opacity-100"
+                              : "opacity-0"
+                            : "opacity-0 group-hover/tag:opacity-100",
+                        )}
+                      >
+                        {tagGroups.length > 0 && (
+                          <select
+                            value={tag.groupId || ""}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              updateTag(tag.id, { groupId: e.target.value || null });
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="min-w-0 max-w-[140px] bg-surface-2 px-2 py-1 text-[13px] text-text-2 outline-none"
+                          >
+                            <option value="">{t("tag.ungrouped", locale)}</option>
+                            {sortedGroups.map((g) => (
+                              <option key={g.id} value={g.id}>
+                                {g.name}
+                                {g.id === groupId ? ` (${t("tag.current", locale)})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setColorPickerTagId((current) => (current === tag.id ? null : tag.id));
+                          }}
+                          className={cn(
+                            "text-text-3 transition-colors hover:text-accent",
+                            mobile ? "p-2" : "p-1",
+                          )}
+                          title={t("tag.color", locale)}
+                        >
+                          <Palette size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startTagRename(tag);
+                          }}
+                          className={cn(
+                            "text-text-3 transition-colors hover:text-accent",
+                            mobile ? "p-2" : "p-1",
+                          )}
+                          title={t("tag.rename", locale)}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteTag(tag.id);
+                          }}
+                          className={cn(
+                            "text-text-3 transition-colors hover:text-danger",
+                            mobile ? "p-2" : "p-1",
+                          )}
+                          title={t("tag.delete", locale)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+              {colorPickerTagId === tag.id && (
+                <div className="mt-2 flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  {COLOR_OPTIONS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => {
+                        updateTag(tag.id, { color });
+                        setColorPickerTagId(null);
+                      }}
+                      className={cn(
+                        "transition-transform hover:scale-110",
+                        mobile ? "h-7 w-7" : "h-5 w-5",
+                        tag.color === color && "ring-2 ring-white/50",
+                      )}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -302,8 +358,13 @@ export function TagManager() {
           return (
             <div
               key={id}
-              onMouseEnter={() => setHoveredGroupId(id)}
-              onMouseLeave={() => setHoveredGroupId(null)}
+              onMouseEnter={mobile ? undefined : () => setHoveredGroupId(id)}
+              onMouseLeave={mobile ? undefined : () => setHoveredGroupId(null)}
+              onClick={
+                mobile && group
+                  ? () => setHoveredGroupId(hoveredGroupId === id ? null : id)
+                  : undefined
+              }
             >
               <div
                 className={cn(

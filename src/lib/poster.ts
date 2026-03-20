@@ -6,7 +6,7 @@ import { isMobile } from "@/lib/platform";
 const TARGET_DPI = 360;
 const PIXEL_RATIO = TARGET_DPI / 96;
 
-export async function exportPoster(element: HTMLElement, defaultName: string) {
+export async function exportPoster(element: HTMLElement, defaultName: string): Promise<boolean> {
   const clone = element.cloneNode(true) as HTMLElement;
   clone.style.position = "absolute";
   clone.style.left = "0";
@@ -22,19 +22,20 @@ export async function exportPoster(element: HTMLElement, defaultName: string) {
     const base64 = dataUrl.split(",")[1];
 
     if (isMobile()) {
-      const filePath = `tinydo-poster-${Date.now()}.png`;
-      await backend.savePoster(filePath, base64, TARGET_DPI);
+      return await backend.savePoster(defaultName, base64, TARGET_DPI);
     } else {
       const filePath = await save({
         defaultPath: defaultName,
         filters: [{ name: "PNG", extensions: ["png"] }],
       });
 
-      if (!filePath) return;
+      if (!filePath) return false;
 
-      await backend.savePoster(filePath, base64, TARGET_DPI);
+      return await backend.savePoster(filePath, base64, TARGET_DPI);
     }
   } finally {
     document.body.removeChild(clone);
   }
+
+  return false;
 }

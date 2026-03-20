@@ -136,7 +136,7 @@ export function importData(filePath: string): Promise<ImportResult> {
   return invoke<ImportResult>("import_data", { filePath });
 }
 
-export function savePoster(filePath: string, pngBase64: string, dpi: number): Promise<void> {
+export function savePoster(filePath: string, pngBase64: string, dpi: number): Promise<boolean> {
   return invoke("save_poster", { filePath, pngBase64, dpi });
 }
 

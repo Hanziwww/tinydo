@@ -40,11 +40,32 @@ import { useEventStore } from "@/stores/eventStore";
 import { usePredictStore } from "@/stores/predictStore";
 import { useSyncStore } from "@/stores/syncStore";
 import { ConflictDialog } from "@/components/sync/ConflictDialog";
+import { showInfoNotice } from "@/lib/errorNotice";
 
 const MINI_W = 320;
 const MINI_H = 420;
 const EASE_OUT_EXPO: [number, number, number, number] = [0.16, 1, 0.3, 1];
 const mobile = isMobile();
+const ICON_SIZE = mobile ? 18 : 17;
+const BTN_PAD = mobile ? "p-2" : "p-1.5";
+
+function SheetHandle({ onClose }: { onClose: () => void }) {
+  const startYRef = useRef(0);
+  return (
+    <div
+      className="flex items-center justify-center pb-1 pt-3"
+      onTouchStart={(e) => {
+        startYRef.current = e.touches[0].clientY;
+      }}
+      onTouchEnd={(e) => {
+        const dy = e.changedTouches[0].clientY - startYRef.current;
+        if (dy > 60) onClose();
+      }}
+    >
+      <div className="h-1 w-10 rounded-full bg-text-3/30" />
+    </div>
+  );
+}
 
 function App() {
   const [showTags, setShowTags] = useState(false);
@@ -61,6 +82,14 @@ function App() {
   const [searchFocusSignal, setSearchFocusSignal] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const backPressRef = useRef(0);
+  const searchOpenRef = useRef(false);
+  const showSettingsRef = useRef(false);
+  const showTagsRef = useRef(false);
+
+  searchOpenRef.current = searchOpen;
+  showSettingsRef.current = showSettings;
+  showTagsRef.current = showTags;
 
   const hydrated = useTodoStore((s) => s._hydrated);
   const theme = useSettingsStore((s) => s.theme);
@@ -89,6 +118,12 @@ function App() {
           void useSyncStore.getState().triggerSync();
         }
       });
+    if (mobile) {
+      const ss = useSettingsStore.getState();
+      if (ss.timelineStartHour === 0 && ss.timelineEndHour === 24) {
+        ss.setTimelineRange(7, 23);
+      }
+    }
     const timer = setTimeout(() => setSplashDone(true), 1500);
     return () => {
       clearTimeout(timer);
@@ -146,6 +181,43 @@ function App() {
     setSearchQuery("");
   }, []);
 
+  const handleMobileScrollableFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    if (!mobile) return;
+    const container = event.currentTarget;
+    const target = event.target as HTMLElement;
+    if (
+      !(
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      )
+    ) {
+      return;
+    }
+    container.style.scrollPaddingBottom = "160px";
+    container.style.paddingBottom = "calc(max(var(--safe-area-bottom), 12px) + 120px)";
+    window.setTimeout(() => {
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 120);
+  }, []);
+
+  const handleMobileScrollableBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    if (!mobile) return;
+    const container = event.currentTarget;
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement
+      ) {
+        if (container.contains(active)) return;
+      }
+      container.style.scrollPaddingBottom = "96px";
+      container.style.paddingBottom = "max(var(--safe-area-bottom), 12px)";
+    }, 80);
+  }, []);
+
   const openSearch = useCallback(() => {
     if (board === "history") return;
     setSearchOpen(true);
@@ -154,7 +226,6 @@ function App() {
 
   useEffect(() => {
     if (!unlocked && board === "tomorrow") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync board when tomorrow locks
       setBoard("today");
     }
   }, [board, unlocked]);
@@ -189,6 +260,51 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [board, closeSearch, openSearch, searchOpen]);
+
+  // Android back button handling — registered once, reads state via refs/stores
+  useEffect(() => {
+    if (!mobile) return;
+    let cleanup: (() => void) | null = null;
+    void import("@tauri-apps/api/app").then(({ onBackButtonPress }) => {
+      void onBackButtonPress(() => {
+        const currentLocale = useSettingsStore.getState().locale;
+        const evtTodoId = useEventStore.getState().eventViewTodoId;
+        const curEditId = useTodoStore.getState().editingTodoId;
+
+        if (searchOpenRef.current) {
+          closeSearch();
+          return;
+        }
+        if (evtTodoId) {
+          useEventStore.getState().setEventViewTodoId(null);
+          return;
+        }
+        if (curEditId) {
+          useTodoStore.getState().setEditingTodoId(null);
+          return;
+        }
+        if (showSettingsRef.current) {
+          setShowSettings(false);
+          return;
+        }
+        if (showTagsRef.current) {
+          setShowTags(false);
+          return;
+        }
+
+        const ts = Date.now();
+        if (ts - backPressRef.current < 2000) {
+          void import("@tauri-apps/plugin-process").then(({ exit }) => exit(0));
+        } else {
+          backPressRef.current = ts;
+          showInfoNotice(t("mobile.back_exit_hint", currentLocale));
+        }
+      }).then((listener) => {
+        cleanup = () => void listener.unregister();
+      });
+    });
+    return () => cleanup?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable
 
   const splitOverdueSubtasks = useTodoStore((s) => s.splitOverdueSubtasks);
   const prevTodayRef = useRef(todayK);
@@ -323,13 +439,13 @@ function App() {
                 <div
                   className={cn(
                     "relative flex h-full min-h-0 flex-col text-text-1",
-                    isDesktop() && "select-none",
+                    (isDesktop() || mobile) && "select-none",
                   )}
                 >
                   <div
                     className={cn(
                       "flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-1",
-                      mobile && "mobile-safe-top",
+                      mobile && "mobile-safe-top mobile-safe-bottom",
                     )}
                   >
                     {isDesktop() && <TitleBar onMiniMode={enterMini} />}
@@ -343,23 +459,22 @@ function App() {
                       <div className="flex items-center justify-between">
                         <FadeTransition
                           transitionKey={board}
-                          className={cn(
-                            "flex items-baseline gap-3",
-                            mobile && "flex-col gap-0.5",
-                          )}
+                          className={cn("flex items-baseline gap-3", mobile && "flex-col gap-0.5")}
                         >
                           <h1
                             className={cn(
                               "font-extrabold leading-tight tracking-tight",
-                              mobile ? "text-[20px]" : "text-[22px]",
+                              mobile ? "text-[18px]" : "text-[22px]",
                             )}
                           >
                             {greeting}
                           </h1>
-                          <p className="text-[14px] text-text-3">{formatDate(dispDate, locale)}</p>
+                          <p className={cn("text-text-3", mobile ? "text-[13px]" : "text-[14px]")}>
+                            {formatDate(dispDate, locale)}
+                          </p>
                         </FadeTransition>
-                        <div className="flex items-center gap-2">
-                          {overdueN > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          {overdueN > 0 && !mobile && (
                             <span className="flex items-center gap-1.5 bg-warning/10 px-2.5 py-1 text-[13px] font-semibold text-warning">
                               <AlertTriangle size={14} />
                               {t("status.overdue", locale, { n: overdueN })}
@@ -381,13 +496,13 @@ function App() {
                               }}
                               className={cn(
                                 "transition-colors",
-                                mobile ? "p-2.5" : "p-1.5",
+                                BTN_PAD,
                                 searchOpen
                                   ? "bg-accent-soft text-accent"
                                   : "text-text-3 hover:bg-surface-2 hover:text-text-1",
                               )}
                             >
-                              <Search size={mobile ? 20 : 17} />
+                              <Search size={ICON_SIZE} />
                             </button>
                           )}
                           <button
@@ -395,31 +510,38 @@ function App() {
                             onClick={() => setShowTags(!showTags)}
                             className={cn(
                               "transition-colors",
-                              mobile ? "p-2.5" : "p-1.5",
+                              BTN_PAD,
                               showTags
                                 ? "bg-accent-soft text-accent"
                                 : "text-text-3 hover:bg-surface-2 hover:text-text-1",
                             )}
                           >
-                            <Hash size={mobile ? 20 : 17} />
+                            <Hash size={ICON_SIZE} />
                           </button>
                           <button
                             type="button"
                             onClick={() => setShowSettings(!showSettings)}
                             className={cn(
                               "transition-colors",
-                              mobile ? "p-2.5" : "p-1.5",
+                              BTN_PAD,
                               showSettings
                                 ? "bg-accent-soft text-accent"
                                 : "text-text-3 hover:bg-surface-2 hover:text-text-1",
                             )}
                           >
-                            <Settings2 size={mobile ? 20 : 17} />
+                            <Settings2 size={ICON_SIZE} />
                           </button>
                         </div>
                       </div>
 
-                      <div className="mt-2.5 flex items-center gap-5">
+                      {mobile && overdueN > 0 && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[13px] font-semibold text-warning">
+                          <AlertTriangle size={13} />
+                          {t("status.overdue", locale, { n: overdueN })}
+                        </div>
+                      )}
+
+                      <div className={cn("flex items-center gap-5", mobile ? "mt-2" : "mt-2.5")}>
                         <button
                           type="button"
                           onClick={() => setBoard("today")}
@@ -485,7 +607,12 @@ function App() {
                                 transition={{ duration: 0.2, ease: EASE_OUT_EXPO }}
                                 className="overflow-hidden"
                               >
-                                <div className="flex items-center gap-3 border border-border bg-surface-2/60 px-3 py-2">
+                                <div
+                                  className={cn(
+                                    "flex items-center gap-3 border border-border bg-surface-2/60 px-3",
+                                    mobile ? "py-2.5" : "py-2",
+                                  )}
+                                >
                                   <Search size={15} className="shrink-0 text-text-3" />
                                   <input
                                     ref={searchInputRef}
@@ -499,7 +626,7 @@ function App() {
                                     <button
                                       type="button"
                                       onClick={() => setSearchQuery("")}
-                                      className="shrink-0 text-[13px] text-text-3 transition-colors hover:text-text-1"
+                                      className="shrink-0 p-1 text-[13px] text-text-3 transition-colors hover:text-text-1"
                                     >
                                       {t("search.clear", locale)}
                                     </button>
@@ -555,7 +682,6 @@ function App() {
                         )}
                       </main>
 
-                      {/* Desktop tag sidebar */}
                       {isDesktop() && (
                         <AnimatePresence>
                           {showTags && (
@@ -596,13 +722,16 @@ function App() {
                       (mobile ? (
                         <motion.div
                           key="detail-panel"
-                          className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+                          className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
                           initial={{ y: "100%" }}
                           animate={{ y: 0 }}
                           exit={{ y: "100%" }}
-                          transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+                          transition={{ duration: 0.35, ease: EASE_OUT_EXPO }}
                         >
-                          <TodoDetail />
+                          <SheetHandle onClose={() => setEditingId(null)} />
+                          <div className="min-h-0 flex-1 overflow-hidden">
+                            <TodoDetail />
+                          </div>
                         </motion.div>
                       ) : (
                         <motion.div
@@ -639,26 +768,35 @@ function App() {
                       (mobile ? (
                         <motion.div
                           key="settings-panel"
-                          className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+                          className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
                           initial={{ y: "100%" }}
                           animate={{ y: 0 }}
                           exit={{ y: "100%" }}
-                          transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+                          transition={{ duration: 0.35, ease: EASE_OUT_EXPO }}
                         >
-                          <div className="flex h-full flex-col overflow-hidden">
-                            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+                          <SheetHandle onClose={() => setShowSettings(false)} />
+                          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                            <div className="flex items-center justify-between border-b border-border px-5 py-2">
                               <h2 className="text-[16px] font-bold">
                                 {t("settings.title", locale)}
                               </h2>
                               <button
                                 type="button"
                                 onClick={() => setShowSettings(false)}
-                                className="p-2.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                                className="p-2 text-text-3 hover:bg-surface-2 hover:text-text-1"
                               >
                                 <X size={18} />
                               </button>
                             </div>
-                            <div className="flex-1 overflow-y-auto p-5">
+                            <div
+                              className="flex-1 overflow-y-auto p-5"
+                              style={{
+                                scrollPaddingBottom: 96,
+                                paddingBottom: "max(var(--safe-area-bottom), 12px)",
+                              }}
+                              onFocusCapture={handleMobileScrollableFocus}
+                              onBlurCapture={handleMobileScrollableBlur}
+                            >
                               <SettingsPanel />
                             </div>
                           </div>
@@ -713,26 +851,33 @@ function App() {
                         {showTags && (
                           <motion.div
                             key="tags-panel"
-                            className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+                            className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
                             initial={{ y: "100%" }}
                             animate={{ y: 0 }}
                             exit={{ y: "100%" }}
-                            transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+                            transition={{ duration: 0.35, ease: EASE_OUT_EXPO }}
                           >
-                            <div className="flex h-full flex-col overflow-hidden">
-                              <div className="flex items-center justify-between border-b border-border px-5 py-3">
-                                <h2 className="text-[16px] font-bold">
-                                  {t("tags.title", locale)}
-                                </h2>
+                            <SheetHandle onClose={() => setShowTags(false)} />
+                            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                              <div className="flex items-center justify-between border-b border-border px-5 py-2">
+                                <h2 className="text-[16px] font-bold">{t("tag.manage", locale)}</h2>
                                 <button
                                   type="button"
                                   onClick={() => setShowTags(false)}
-                                  className="p-2.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                                  className="p-2 text-text-3 hover:bg-surface-2 hover:text-text-1"
                                 >
                                   <X size={18} />
                                 </button>
                               </div>
-                              <div className="flex-1 overflow-y-auto p-5">
+                              <div
+                                className="flex-1 overflow-y-auto p-5"
+                                style={{
+                                  scrollPaddingBottom: 96,
+                                  paddingBottom: "max(var(--safe-area-bottom), 12px)",
+                                }}
+                                onFocusCapture={handleMobileScrollableFocus}
+                                onBlurCapture={handleMobileScrollableBlur}
+                              >
                                 <TagManager />
                               </div>
                             </div>
@@ -776,13 +921,16 @@ function EventPanelOverlay() {
           (mobile ? (
             <motion.div
               key="event-panel"
-              className="absolute inset-0 z-50 overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
+              className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-surface-1 mobile-safe-top mobile-safe-bottom"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              transition={{ duration: 0.3, ease: EASE_OUT_EXPO }}
+              transition={{ duration: 0.35, ease: EASE_OUT_EXPO }}
             >
-              <EventPanel />
+              <SheetHandle onClose={() => setEventViewTodoId(null)} />
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <EventPanel />
+              </div>
             </motion.div>
           ) : (
             <motion.div

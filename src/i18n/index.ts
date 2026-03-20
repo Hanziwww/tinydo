@@ -310,6 +310,9 @@ const translations: Record<Locale, Record<string, string>> = {
     "sync.conflict.entity": "{type} - {id}",
     "sync.desc": "通过自建同步服务器在多台设备间同步数据，端到端加密",
     "sync.prev_config": "已自动填入上次使用的连接信息",
+
+    "mobile.back_exit_hint": "再按一次退出应用",
+    "mobile.long_press_edit": "长按编辑",
   },
   en: {
     "app.greeting": "{name}, what to do today?",
@@ -629,6 +632,9 @@ const translations: Record<Locale, Record<string, string>> = {
     "sync.conflict.entity": "{type} - {id}",
     "sync.desc": "Sync data across devices via self-hosted server with end-to-end encryption",
     "sync.prev_config": "Pre-filled with your last connection",
+
+    "mobile.back_exit_hint": "Press back again to exit",
+    "mobile.long_press_edit": "Long press to edit",
   },
 };
 

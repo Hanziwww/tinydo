@@ -5,6 +5,7 @@ import {
   DragOverlay,
   closestCenter,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -13,12 +14,15 @@ import {
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { AlertTriangle, ListChecks } from "lucide-react";
 import { t } from "@/i18n";
+import { isMobile } from "@/lib/platform";
 import { isTodoCompletedForDate, isTodoVisibleOnBoard } from "@/lib/todo-helpers";
-import { getOverdueDays, getTodayDateKey } from "@/lib/utils";
+import { cn, getOverdueDays, getTodayDateKey } from "@/lib/utils";
 import { useTodoStore } from "@/stores/todoStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SortableTodoItem, TodoItem } from "./TodoItem";
 import type { PlanningBoard } from "@/types";
+
+const mobile = isMobile();
 
 interface Props {
   board: PlanningBoard;
@@ -70,7 +74,11 @@ export function TodoList({ board, boardDate, searchQuery }: Props) {
   const isFirstRun =
     todos.length === 0 && filterTagIds.length === 0 && searchQuery.trim().length === 0;
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 300, tolerance: 5 },
+  });
+  const sensors = useSensors(mobile ? touchSensor : pointerSensor);
   function onDragStart(ev: DragStartEvent) {
     setActiveId(String(ev.active.id));
   }
@@ -88,8 +96,8 @@ export function TodoList({ board, boardDate, searchQuery }: Props) {
   if (filtered.length === 0) {
     if (isFirstRun) {
       return (
-        <div className="mx-auto max-w-[540px] px-6 py-14">
-          <div className="border border-border bg-surface-2/40 p-6">
+        <div className={cn("mx-auto max-w-[540px]", mobile ? "px-4 py-6" : "px-6 py-14")}>
+          <div className={cn("border border-border bg-surface-2/40", mobile ? "p-5" : "p-6")}>
             <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-accent">
               TinyDo
             </p>
@@ -111,7 +119,12 @@ export function TodoList({ board, boardDate, searchQuery }: Props) {
       );
     }
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-text-3">
+      <div
+        className={cn(
+          "flex flex-col items-center justify-center text-text-3",
+          mobile ? "py-10" : "py-16",
+        )}
+      >
         <ListChecks size={36} strokeWidth={1.2} className="mb-4 opacity-25" />
         <p className="text-[14px] font-medium text-text-2">{t("todo.empty", locale)}</p>
         <p className="mt-1.5 text-[13px] text-text-3">
@@ -124,7 +137,12 @@ export function TodoList({ board, boardDate, searchQuery }: Props) {
   return (
     <div>
       {board === "today" && odN > 0 && viewMode !== "completed" && (
-        <div className="flex items-center gap-2 border-b border-warning/20 bg-warning/[0.05] px-6 py-2 text-[13px] font-semibold text-warning">
+        <div
+          className={cn(
+            "flex items-center gap-2 border-b border-warning/20 bg-warning/[0.05] py-2 text-[13px] font-semibold text-warning",
+            mobile ? "px-4" : "px-6",
+          )}
+        >
           <AlertTriangle size={14} />
           {t("status.overdue", locale, { n: odN })}
         </div>

@@ -10,6 +10,7 @@
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "process:default"
   ]
 }

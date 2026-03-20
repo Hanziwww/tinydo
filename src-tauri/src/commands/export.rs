@@ -635,7 +635,12 @@ pub fn import_data(
 }
 
 #[tauri::command]
-pub fn save_poster(file_path: String, png_base64: String, dpi: u32) -> Result<(), AppError> {
+pub async fn save_poster(
+    app: tauri::AppHandle,
+    file_path: String,
+    png_base64: String,
+    dpi: u32,
+) -> Result<bool, AppError> {
     use base64::Engine;
 
     if file_path.is_empty() {
@@ -644,9 +649,63 @@ pub fn save_poster(file_path: String, png_base64: String, dpi: u32) -> Result<()
 
     let bytes = base64::engine::general_purpose::STANDARD.decode(&png_base64)?;
     let out = inject_png_dpi(&bytes, dpi);
-    std::fs::write(&file_path, out)?;
-    log::info!("Poster saved to {} (DPI={})", file_path, dpi);
-    Ok(())
+
+    #[cfg(target_os = "android")]
+    {
+        use std::io::Write;
+        use tauri_plugin_android_fs::{AndroidFsExt, PublicImageDir};
+
+        let api = app.android_fs_async();
+        let initial_location = api
+            .public_storage()
+            .resolve_initial_location(None, PublicImageDir::Pictures, "TinyDo", true)
+            .await
+            .map_err(|e| AppError::custom(format!("Cannot open save location: {e}")))?;
+        let file_name = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("tinydo-poster.png");
+        let selected_file = api
+            .file_picker()
+            .save_file(Some(&initial_location), file_name, Some("image/png"), false)
+            .await
+            .map_err(|e| AppError::custom(format!("Cannot open save dialog: {e}")))?;
+
+        let Some(uri) = selected_file else {
+            return Ok(false);
+        };
+
+        let mut file = api
+            .open_file_writable(&uri)
+            .await
+            .map_err(|e| AppError::custom(format!("Cannot open target file: {e}")))?;
+        file.write_all(&out)?;
+        file.flush()?;
+        log::info!("Poster saved via Android picker (DPI={})", dpi);
+        return Ok(true);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri::Manager;
+
+        let path = std::path::Path::new(&file_path);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            app.path()
+                .app_data_dir()
+                .map_err(|e| AppError::custom(format!("Cannot resolve app data dir: {e}")))?
+                .join(path)
+        };
+        if let Some(parent) = resolved.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        std::fs::write(&resolved, out)?;
+        log::info!("Poster saved to {:?} (DPI={})", resolved, dpi);
+        Ok(true)
+    }
 }
 
 fn inject_png_dpi(raw: &[u8], dpi: u32) -> Vec<u8> {

@@ -14,6 +14,7 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { t } from "@/i18n";
+import { isMobile } from "@/lib/platform";
 import { withTodoDefaults } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePredictStore } from "@/stores/predictStore";
@@ -36,6 +37,7 @@ import {
 import type { Difficulty, Locale, SubTask, TaskRelationType, TimeSlot, Todo } from "@/types";
 
 const REMINDER_PRESETS = [null, 0, 5, 15, 30, 60, 120, 720] as const;
+const mobile = isMobile();
 
 export function TodoDetail() {
   const locale = useSettingsStore((s) => s.locale);
@@ -77,11 +79,11 @@ export function TodoDetail() {
   }, [editId, todos]);
 
   useEffect(() => {
-    const h = (e: MouseEvent) => {
+    const h = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setPickerOpen(false);
     };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    document.addEventListener("pointerdown", h);
+    return () => document.removeEventListener("pointerdown", h);
   }, []);
 
   if (!todo) return null;
@@ -136,6 +138,41 @@ export function TodoDetail() {
     return t("detail.reminder_mins", locale, { n: mins });
   };
 
+  const handleScrollFocus = (event: React.FocusEvent<HTMLDivElement>) => {
+    if (!mobile) return;
+    const container = event.currentTarget;
+    const target = event.target as HTMLElement;
+    if (
+      !(target instanceof HTMLInputElement) &&
+      !(target instanceof HTMLTextAreaElement) &&
+      !(target instanceof HTMLSelectElement)
+    ) {
+      return;
+    }
+    container.style.scrollPaddingBottom = "160px";
+    container.style.paddingBottom = "calc(max(var(--safe-area-bottom), 12px) + 120px)";
+    window.setTimeout(() => {
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 120);
+  };
+
+  const handleScrollBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    if (!mobile) return;
+    const container = event.currentTarget;
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement
+      ) {
+        if (container.contains(active)) return;
+      }
+      container.style.scrollPaddingBottom = "96px";
+      container.style.paddingBottom = "max(var(--safe-area-bottom), 12px)";
+    }, 80);
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface-1">
       <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -149,7 +186,15 @@ export function TodoDetail() {
         </button>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto p-5">
+      <div
+        className="flex-1 space-y-5 overflow-y-auto p-5"
+        style={{
+          scrollPaddingBottom: mobile ? 96 : undefined,
+          paddingBottom: mobile ? "max(var(--safe-area-bottom), 12px)" : undefined,
+        }}
+        onFocusCapture={handleScrollFocus}
+        onBlurCapture={handleScrollBlur}
+      >
         {od > 0 && (
           <div className="bg-warning/10 p-4 text-warning">
             <div className="flex items-center gap-2 text-[15px] font-bold">
@@ -353,7 +398,7 @@ export function TodoDetail() {
             <label className="mb-1.5 block text-[15px] font-medium text-text-2">
               {t("detail.reminder", locale)}
             </label>
-            <div className="grid grid-cols-4 gap-1">
+            <div className={cn("grid gap-1", mobile ? "grid-cols-3" : "grid-cols-4")}>
               {REMINDER_PRESETS.map((mins) => (
                 <button
                   key={String(mins)}
@@ -538,6 +583,7 @@ function DetailSortableSubtask({
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(st.title);
+  const longPressRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: st.id,
@@ -553,6 +599,11 @@ function DetailSortableSubtask({
     setEditing(false);
   }
 
+  const startEdit = () => {
+    setValue(st.title);
+    setEditing(true);
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -565,26 +616,30 @@ function DetailSortableSubtask({
       {...attributes}
       className={cn(
         "flex items-center gap-2",
+        mobile && "py-0.5",
         isDeleting && "animate-subtask-delete",
         isEntering && "animate-subtask-enter",
       )}
     >
-      <div
-        {...listeners}
-        className="cursor-grab text-text-3 opacity-0 transition-opacity hover:opacity-60 [div:hover>&]:opacity-40"
-        style={{ opacity: isDragging ? 0 : undefined }}
-      >
-        <GripVertical size={12} />
-      </div>
+      {!mobile && (
+        <div
+          {...listeners}
+          className="cursor-grab text-text-3 opacity-0 transition-opacity hover:opacity-60 [div:hover>&]:opacity-40"
+          style={{ opacity: isDragging ? 0 : undefined }}
+        >
+          <GripVertical size={12} />
+        </div>
+      )}
       <button
         type="button"
         onClick={() => toggleSubtask(todoId, st.id)}
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center border",
+          "flex shrink-0 items-center justify-center border",
+          mobile ? "h-5 w-5" : "h-4 w-4",
           st.completed ? "border-success bg-success text-white" : "border-text-3/60",
         )}
       >
-        {st.completed && <Check size={10} strokeWidth={2.5} />}
+        {st.completed && <Check size={mobile ? 12 : 10} strokeWidth={2.5} />}
       </button>
       {editing ? (
         <input
@@ -604,10 +659,28 @@ function DetailSortableSubtask({
       ) : (
         <button
           type="button"
-          onDoubleClick={() => {
-            setValue(st.title);
-            setEditing(true);
-          }}
+          onDoubleClick={mobile ? undefined : startEdit}
+          onTouchStart={
+            mobile
+              ? () => {
+                  longPressRef.current = setTimeout(startEdit, 500);
+                }
+              : undefined
+          }
+          onTouchEnd={
+            mobile
+              ? () => {
+                  if (longPressRef.current) clearTimeout(longPressRef.current);
+                }
+              : undefined
+          }
+          onTouchMove={
+            mobile
+              ? () => {
+                  if (longPressRef.current) clearTimeout(longPressRef.current);
+                }
+              : undefined
+          }
           className={cn(
             "flex-1 text-left text-[15px] text-text-1",
             st.completed && "line-through text-text-3",
@@ -621,7 +694,7 @@ function DetailSortableSubtask({
         onClick={() => {
           if (!isDeleting) onDelete();
         }}
-        className="shrink-0 p-1 text-text-3 hover:text-danger"
+        className={cn("shrink-0 text-text-3 hover:text-danger", mobile ? "p-1.5" : "p-1")}
       >
         <Trash2 size={14} />
       </button>
@@ -835,7 +908,9 @@ function DetailRelationSection({
           ))
         )}
 
-        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-2">
+        <div
+          className={cn("gap-2", mobile ? "flex flex-col" : "grid grid-cols-[140px_minmax(0,1fr)]")}
+        >
           <select
             value={relationType}
             onChange={(e) => setRelationType(e.target.value as TaskRelationType)}

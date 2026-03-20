@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { t } from "@/i18n";
+import { isMobile } from "@/lib/platform";
 import { isTodoArchivedForDate, isTodoCompletedForDate } from "@/lib/todo-helpers";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTodoStore } from "@/stores/todoStore";
@@ -14,6 +15,8 @@ import {
   minutesToTime,
 } from "@/lib/utils";
 import type { PlanningBoard, TimeSlot } from "@/types";
+
+const mobile = isMobile();
 
 interface Props {
   board: PlanningBoard;
@@ -103,6 +106,7 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
   const nowPct = pct(nowMin);
   const showNow = board === "today" && nowMin >= START && nowMin <= END;
   const nowLabel = `${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`;
+  const nowLabelAlign = nowPct > 94 ? "end" : nowPct < 6 ? "start" : "center";
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent, todoId: string, slotId: string, edge: "start" | "end" | "point") => {
@@ -156,7 +160,7 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
   }, []);
 
   const showTooltip = (e: React.MouseEvent, text: string) => {
-    if (drag) return;
+    if (drag || mobile) return;
     const cRect = containerRef.current?.getBoundingClientRect();
     const bRect = barRef.current?.getBoundingClientRect();
     if (!cRect || !bRect) return;
@@ -189,7 +193,7 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
   );
 
   const scheduleHoverQuickAdd = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (drag) return;
+    if (drag || mobile) return;
     const target = e.target as HTMLElement;
     if (target.closest("[data-slot-item='true']")) {
       clearHoverQuickAdd();
@@ -206,6 +210,14 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
       setHoverQuickAdd(candidate);
       hoverTimerRef.current = null;
     }, 500);
+  };
+
+  const createAtCurrentTime = () => {
+    const d = new Date();
+    const curMin = d.getHours() * 60 + d.getMinutes();
+    const startMin = snap(Math.max(START, Math.min(END - 60, curMin)));
+    const endMin = Math.min(END, startMin + 60);
+    addTimelineTodo(refDate, minutesToTime(startMin), minutesToTime(endMin));
   };
 
   const createHoveredTask = () => {
@@ -310,6 +322,10 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
             {hours.map((h, i) => {
               const isFirst = i === 0;
               const isLast = i === hours.length - 1;
+              const totalH = endHour - startHour;
+              const step = mobile ? (totalH > 12 ? 4 : totalH > 8 ? 3 : 2) : 1;
+              const showLabel = !mobile || i % step === 0 || isLast;
+              if (!showLabel) return null;
               return (
                 <span
                   key={h}
@@ -325,7 +341,11 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
             })}
             {showNow && (
               <div
-                className="absolute -translate-x-1/2 bg-danger px-1.5 py-0.5 text-[12px] font-bold leading-none text-white"
+                className={cn(
+                  "absolute z-10 bg-danger px-1.5 py-0.5 text-[12px] font-bold leading-none text-white shadow-sm",
+                  nowLabelAlign === "center" && "-translate-x-1/2",
+                  nowLabelAlign === "end" && "-translate-x-full",
+                )}
                 style={{ left: `${nowPct}%`, top: "-2px" }}
               >
                 {nowLabel}
@@ -356,12 +376,12 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
 
             {showNow && (
               <div
-                className="absolute top-0 h-full w-0.5 bg-danger"
+                className="absolute top-0 z-10 h-full w-0.5 bg-danger"
                 style={{ left: `${nowPct}%` }}
               />
             )}
 
-            {hoverQuickAdd && !drag && (
+            {!mobile && hoverQuickAdd && !drag && (
               <button
                 type="button"
                 data-hover-create="true"
@@ -374,6 +394,17 @@ export function Timeline({ board, boardDate, searchQuery }: Props) {
               </button>
             )}
           </div>
+
+          {mobile && (
+            <button
+              type="button"
+              onClick={createAtCurrentTime}
+              className="mt-2 flex items-center gap-1.5 text-[13px] font-medium text-accent"
+            >
+              <Plus size={14} />
+              {t("timeline.new_task", locale)}
+            </button>
+          )}
         </div>
       </div>
 

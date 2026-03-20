@@ -31,6 +31,7 @@ import {
   hexToRgba,
 } from "@/lib/utils";
 import { isTodoCompletedForDate } from "@/lib/todo-helpers";
+import { isMobile } from "@/lib/platform";
 import { t } from "@/i18n";
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
@@ -53,14 +54,21 @@ type RelationDisplayItem = Todo["outgoingRelations"][number] & {
 };
 
 const ENTER_THRESHOLD_MS = 600;
+const mobile = isMobile();
 
 export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(todo.title);
   const [anim, setAnim] = useState<"completing" | "uncompleting" | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [swipeX, setSwipeX] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const swipeStartRef = useRef<{ x: number; y: number; horizontal: boolean } | null>(null);
+  const swipeXRef = useRef(0);
+  const swipeConsumedRef = useRef(false);
   const ref = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const longPressRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const locale = useSettingsStore((s) => s.locale);
   const enableSubtasks = useSettingsStore((s) => s.enableSubtasks);
   const toggle = useTodoStore((s) => s.toggleTodo);
@@ -126,11 +134,12 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     () => () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+      if (longPressRef.current) clearTimeout(longPressRef.current);
     },
     [],
   );
 
-  const handleDelete = (e: React.MouseEvent) => {
+  const handleDelete = (e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
     if (selectionMode) return;
     if (deleting) return;
@@ -140,7 +149,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
 
   const isDayDone = isTodoCompletedForDate(todo, refDate);
 
-  const handleToggle = (e: React.MouseEvent) => {
+  const handleToggle = (e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
     if (selectionMode) return;
     if (anim) return;
@@ -164,6 +173,10 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   }
 
   function rowClick(e: React.MouseEvent) {
+    if (swipeConsumedRef.current) {
+      swipeConsumedRef.current = false;
+      return;
+    }
     if ((e.target as HTMLElement).closest("button, input")) return;
     if (selectionMode) {
       toggleTodoSelection(todo.id);
@@ -176,6 +189,17 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     setEdit(todo.id);
   }
 
+  const handleTitleLongPress = () => {
+    if (selectionMode) return;
+    longPressRef.current = setTimeout(() => {
+      setEditing(true);
+    }, 500);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+  };
+
   function handleAddSubtask(e: React.SyntheticEvent) {
     e.preventDefault();
     const v = subtaskInput.trim();
@@ -187,256 +211,356 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
 
   const isChecked = anim === "completing" || (isDayDone && anim !== "uncompleting");
 
+  const setEventViewTodoId = useEventStore((s) => s.setEventViewTodoId);
+
+  const onSwipeTouchStart = (e: React.TouchEvent) => {
+    swipeStartRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+      horizontal: false,
+    };
+    swipeXRef.current = 0;
+    swipeConsumedRef.current = false;
+    setSwipeX(0);
+    setSwiping(false);
+  };
+  const onSwipeTouchMove = (e: React.TouchEvent) => {
+    if (!swipeStartRef.current) return;
+    const dx = e.touches[0].clientX - swipeStartRef.current.x;
+    const dy = e.touches[0].clientY - swipeStartRef.current.y;
+    if (!swipeStartRef.current.horizontal && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+      swipeStartRef.current.horizontal = true;
+      swipeConsumedRef.current = true;
+      setSwiping(true);
+    }
+    if (swipeStartRef.current.horizontal) {
+      e.stopPropagation();
+      const nextX = Math.max(-100, Math.min(100, dx));
+      swipeXRef.current = nextX;
+      setSwipeX(nextX);
+    }
+  };
+  const onSwipeTouchEnd = () => {
+    const finalX = swipeXRef.current;
+    if (finalX < -70) {
+      setDeleting(true);
+      deleteTimerRef.current = setTimeout(() => remove(todo.id), 350);
+    } else if (finalX > 70) {
+      setEventViewTodoId(todo.id);
+    }
+    swipeXRef.current = 0;
+    setSwipeX(0);
+    setSwiping(false);
+    swipeStartRef.current = null;
+  };
+
+  const mobileSwipeHandlers =
+    mobile && !selectionMode
+      ? {
+          onTouchStart: onSwipeTouchStart,
+          onTouchMove: onSwipeTouchMove,
+          onTouchEnd: onSwipeTouchEnd,
+          onTouchCancel: onSwipeTouchEnd,
+        }
+      : {};
+
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={rowClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") rowClick(e as unknown as React.MouseEvent);
-      }}
-      className={cn(
-        "group relative grid grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-3 border-b border-border/60 py-2.5 pl-10 pr-5 transition-all duration-300",
-        od > 0 ? "bg-warning/[0.04]" : "hover:bg-surface-2/40",
-        selectionMode && isSelected && "bg-accent/5 ring-1 ring-accent/40",
-        isHighlighted &&
-          !selectionMode &&
-          "ring-2 ring-accent/60 shadow-[0_0_12px_rgba(99,102,241,0.35)]",
-        isDayDone && !anim && "opacity-50",
-        anim === "completing" && "animate-row-complete",
-        anim === "uncompleting" && "animate-row-uncomplete",
-        deleting && "animate-row-delete",
-        isNew && !anim && !deleting && "animate-row-enter",
+    <div className={cn("group relative overflow-hidden")} {...mobileSwipeHandlers}>
+      {mobile && (
+        <>
+          <div
+            className="absolute inset-y-0 right-0 flex w-[100px] items-center justify-center bg-danger text-white"
+            style={{ opacity: swipeX < -20 ? Math.min(1, Math.abs(swipeX) / 70) : 0 }}
+          >
+            <Trash2 size={20} />
+          </div>
+          <div
+            className="absolute inset-y-0 left-0 flex w-[100px] items-center justify-center bg-accent text-white"
+            style={{ opacity: swipeX > 20 ? Math.min(1, swipeX / 70) : 0 }}
+          >
+            <ScrollText size={20} />
+          </div>
+        </>
       )}
-    >
-      {od > 0 && <span className="absolute inset-y-2 left-0 w-[3px] bg-warning" />}
-
-      {selectionMode && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleTodoSelection(todo.id);
-          }}
-          className={cn(
-            "absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center border-2 transition-colors",
-            isSelected
-              ? "border-accent bg-accent text-white"
-              : "border-text-3/40 bg-surface-1 text-transparent",
-          )}
-        >
-          {isSelected && <Check size={10} strokeWidth={3} />}
-        </button>
-      )}
-
       <div
-        {...(dragListeners ?? {})}
-        onClick={(e) => e.stopPropagation()}
-        className="absolute left-1.5 top-1/2 -translate-y-1/2 cursor-grab text-text-3 opacity-0 transition-opacity group-hover:opacity-40"
-        style={{ display: selectionMode ? "none" : undefined }}
-      >
-        <GripVertical size={14} />
-      </div>
-
-      {index !== undefined && !todo.completed && (
-        <span
-          className="absolute left-5 top-1/2 -translate-y-1/2 text-[13px] font-medium tabular-nums transition-opacity group-hover:opacity-0"
-          style={{
-            color:
-              index <= 2
-                ? "var(--color-accent)"
-                : index <= 4
-                  ? "var(--color-text-2)"
-                  : "var(--color-text-3)",
-            opacity: index <= 2 ? 0.7 : index <= 4 ? 0.45 : 0.3,
-          }}
-        >
-          {index}
-        </span>
-      )}
-
-      <button
-        type="button"
-        onClick={handleToggle}
-        className={cn(
-          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center self-center border-2",
-          isChecked
-            ? "border-success bg-success text-white"
-            : "border-text-3/60 hover:border-accent",
-          anim === "completing" && "animate-check-pop",
-        )}
-      >
-        {isChecked && <Check size={10} strokeWidth={3} />}
-      </button>
-
-      <div className="min-w-0 flex-1">
-        {editing ? (
-          <input
-            ref={ref}
-            value={editVal}
-            onChange={(e) => setEditVal(e.target.value)}
-            onBlur={save}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") save();
-              if (e.key === "Escape") {
-                setEditVal(todo.title);
-                setEditing(false);
+        role="button"
+        tabIndex={0}
+        onClick={rowClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") rowClick(e as unknown as React.MouseEvent);
+        }}
+        {...(mobile && dragListeners ? dragListeners : {})}
+        style={
+          mobile
+            ? {
+                transform: `translateX(${swipeX}px)`,
+                transition: swiping ? "none" : "transform 0.2s ease-out",
               }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full bg-transparent text-[15px] leading-snug text-text-1 outline-none"
-          />
-        ) : (
-          <div className="flex items-center gap-1.5">
-            <p
-              className={cn(
-                "text-[15px] leading-snug text-text-1",
-                (isChecked || todo.completed) && "line-through text-text-3",
-              )}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                if (selectionMode) return;
-                setEditing(true);
-              }}
-            >
-              {todo.title}
-            </p>
-            {showSubtasks && (
-              <button
-                type="button"
-                data-subtask-badge
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setExpanded((x) => !x);
-                }}
-                className={cn(
-                  "flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] transition-colors",
-                  "text-text-3 hover:bg-surface-3 hover:text-text-2",
-                )}
-                title={expanded ? "" : t("subtask.add", locale)}
-              >
-                <ChevronRight
-                  size={12}
-                  className={cn("transition-transform duration-150", expanded && "rotate-90")}
-                />
-                {subtasks.length > 0 && (
-                  <span className="tabular-nums">
-                    {t("subtask.count", locale, { done: doneCount, total: subtasks.length })}
-                  </span>
-                )}
-              </button>
-            )}
-            <TodoPredictionBadge todoId={todo.id} completed={isChecked || todo.completed} />
-          </div>
+            : undefined
+        }
+        className={cn(
+          "relative border-b border-border/60 transition-all duration-300 bg-surface-1",
+          mobile
+            ? "grid grid-cols-[20px_minmax(0,1fr)] items-start gap-x-3 py-3.5 pl-4 pr-4"
+            : "group grid grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-3 py-2.5 pl-10 pr-5",
+          od > 0 ? "bg-warning/[0.04]" : "hover:bg-surface-2/40",
+          selectionMode && isSelected && "bg-accent/5 ring-1 ring-accent/40",
+          isHighlighted &&
+            !selectionMode &&
+            "ring-2 ring-accent/60 shadow-[0_0_12px_rgba(99,102,241,0.35)]",
+          isDayDone && !anim && "opacity-50",
+          anim === "completing" && "animate-row-complete",
+          anim === "uncompleting" && "animate-row-uncomplete",
+          deleting && "animate-row-delete",
+          isNew && !anim && !deleting && "animate-row-enter",
         )}
+      >
+        {od > 0 && <span className="absolute inset-y-2 left-0 w-[3px] bg-warning" />}
 
-        {primaryRelation && (
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[13px] leading-5 text-text-3">
-            <span className="shrink-0 text-[12px] leading-none opacity-55">↳</span>
-            <span className="shrink-0 font-medium">
-              {t(`relation.short.${primaryRelation.relationType}`, locale)}
-            </span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEdit(primaryRelation.targetTaskId);
-              }}
-              onMouseEnter={() => setHighlightedTodoId(primaryRelation.targetTaskId)}
-              onMouseLeave={() => setHighlightedTodoId(null)}
-              title={`${t(`relation.${primaryRelation.relationType}`, locale)} ${primaryRelation.targetTitle}`}
-              className="min-w-0 max-w-[220px] truncate text-left leading-5 transition-colors hover:text-accent"
-            >
-              {primaryRelation.targetTitle}
-            </button>
-            {relationItems.length > 1 && (
-              <span className="shrink-0 opacity-70">+{relationItems.length - 1}</span>
-            )}
-          </div>
-        )}
-
-        {showSubtasks && (
-          <SubtaskList
-            expanded={expanded}
-            subtasks={subtasks}
-            locale={locale}
-            subtaskInput={subtaskInput}
-            setSubtaskInput={setSubtaskInput}
-            onAddSubtask={handleAddSubtask}
-            onToggleSubtask={(stId) => toggleSubtask(todo.id, stId)}
-            onDeleteSubtask={(stId) => deleteSubtask(todo.id, stId)}
-            onReorder={(aId, oId) => reorderSubtasks(todo.id, aId, oId)}
-            dragSubId={dragSubId}
-            setDragSubId={setDragSubId}
-          />
-        )}
-
-        {hasMeta && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 text-[13px] font-medium"
-              style={{ backgroundColor: hexToRgba(diff.color, 0.08), color: diff.color }}
-            >
-              <span className="h-1.5 w-1.5" style={{ backgroundColor: diff.color }} />
-              {t(`diff.${todo.difficulty}`, locale)}
-            </span>
-
-            {od > 0 && (
-              <span className="inline-flex items-center gap-1 bg-warning/10 px-2 py-0.5 text-[13px] font-bold text-warning">
-                <AlertTriangle size={12} />
-                {t("task.overdue", locale, { n: od })}
-              </span>
-            )}
-
-            {dayIdx !== null && (
-              <span className="inline-flex items-center gap-1 bg-accent/10 px-2 py-0.5 text-[13px] font-medium text-accent">
-                {t("duration.day_n", locale, { x: dayIdx, n: dur })}
-                {todo.completedDayKeys.length > 0 && (
-                  <span className="opacity-70">
-                    ({t("duration.done_n", locale, { n: todo.completedDayKeys.length })})
-                  </span>
-                )}
-              </span>
-            )}
-
-            {time && (
-              <span className="inline-flex items-center gap-1 text-[13px] text-text-2">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                {time}
-              </span>
-            )}
-
-            {todoTags.map((tg) => (
-              <TagBadge key={tg.id} tag={tg} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {!selectionMode && (
-        <div className="flex shrink-0 items-center gap-0.5">
-          <EventButton todoId={todo.id} />
+        {selectionMode && (
           <button
             type="button"
-            onClick={handleDelete}
-            className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleTodoSelection(todo.id);
+            }}
+            className={cn(
+              "absolute top-1/2 flex -translate-y-1/2 items-center justify-center border-2 transition-colors",
+              mobile ? "left-1 h-5 w-5" : "left-1.5 h-4 w-4",
+              isSelected
+                ? "border-accent bg-accent text-white"
+                : "border-text-3/40 bg-surface-1 text-transparent",
+            )}
           >
-            <Trash2 size={15} />
+            {isSelected && <Check size={mobile ? 12 : 10} strokeWidth={3} />}
           </button>
+        )}
+
+        {!mobile && (
+          <div
+            {...(dragListeners ?? {})}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute left-1.5 top-1/2 -translate-y-1/2 cursor-grab text-text-3 opacity-0 transition-opacity group-hover:opacity-40"
+            style={{ display: selectionMode ? "none" : undefined }}
+          >
+            <GripVertical size={14} />
+          </div>
+        )}
+
+        {!mobile && index !== undefined && !todo.completed && (
+          <span
+            className="absolute left-5 top-1/2 -translate-y-1/2 text-[13px] font-medium tabular-nums transition-opacity group-hover:opacity-0"
+            style={{
+              color:
+                index <= 2
+                  ? "var(--color-accent)"
+                  : index <= 4
+                    ? "var(--color-text-2)"
+                    : "var(--color-text-3)",
+              opacity: index <= 2 ? 0.7 : index <= 4 ? 0.45 : 0.3,
+            }}
+          >
+            {index}
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={handleToggle}
+          className={cn(
+            "mt-0.5 shrink-0 items-center justify-center self-center border-2",
+            mobile ? "flex h-5 w-5" : "flex h-4 w-4",
+            isChecked
+              ? "border-success bg-success text-white"
+              : "border-text-3/60 hover:border-accent",
+            anim === "completing" && "animate-check-pop",
+          )}
+        >
+          {isChecked && <Check size={mobile ? 12 : 10} strokeWidth={3} />}
+        </button>
+
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              ref={ref}
+              value={editVal}
+              onChange={(e) => setEditVal(e.target.value)}
+              onBlur={save}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") save();
+                if (e.key === "Escape") {
+                  setEditVal(todo.title);
+                  setEditing(false);
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className={cn(
+                "w-full bg-transparent leading-snug text-text-1 outline-none",
+                mobile ? "text-[16px]" : "text-[15px]",
+              )}
+            />
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <p
+                className={cn(
+                  "leading-snug text-text-1",
+                  mobile ? "text-[15px]" : "text-[15px]",
+                  (isChecked || todo.completed) && "line-through text-text-3",
+                )}
+                onDoubleClick={
+                  mobile
+                    ? undefined
+                    : (e) => {
+                        e.stopPropagation();
+                        if (selectionMode) return;
+                        setEditing(true);
+                      }
+                }
+                onTouchStart={mobile ? handleTitleLongPress : undefined}
+                onTouchEnd={mobile ? cancelLongPress : undefined}
+                onTouchMove={mobile ? cancelLongPress : undefined}
+              >
+                {todo.title}
+              </p>
+              {showSubtasks && (
+                <button
+                  type="button"
+                  data-subtask-badge
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpanded((x) => !x);
+                  }}
+                  className={cn(
+                    "flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] transition-colors",
+                    "text-text-3 hover:bg-surface-3 hover:text-text-2",
+                  )}
+                  title={expanded ? "" : t("subtask.add", locale)}
+                >
+                  <ChevronRight
+                    size={12}
+                    className={cn("transition-transform duration-150", expanded && "rotate-90")}
+                  />
+                  {subtasks.length > 0 && (
+                    <span className="tabular-nums">
+                      {t("subtask.count", locale, { done: doneCount, total: subtasks.length })}
+                    </span>
+                  )}
+                </button>
+              )}
+              <TodoPredictionBadge todoId={todo.id} completed={isChecked || todo.completed} />
+            </div>
+          )}
+
+          {primaryRelation && (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[13px] leading-5 text-text-3">
+              <span className="shrink-0 text-[12px] leading-none opacity-55">↳</span>
+              <span className="shrink-0 font-medium">
+                {t(`relation.short.${primaryRelation.relationType}`, locale)}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEdit(primaryRelation.targetTaskId);
+                }}
+                onMouseEnter={
+                  mobile ? undefined : () => setHighlightedTodoId(primaryRelation.targetTaskId)
+                }
+                onMouseLeave={mobile ? undefined : () => setHighlightedTodoId(null)}
+                title={`${t(`relation.${primaryRelation.relationType}`, locale)} ${primaryRelation.targetTitle}`}
+                className="min-w-0 max-w-[220px] truncate text-left leading-5 transition-colors hover:text-accent"
+              >
+                {primaryRelation.targetTitle}
+              </button>
+              {relationItems.length > 1 && (
+                <span className="shrink-0 opacity-70">+{relationItems.length - 1}</span>
+              )}
+            </div>
+          )}
+
+          {showSubtasks && (
+            <SubtaskList
+              expanded={expanded}
+              subtasks={subtasks}
+              locale={locale}
+              subtaskInput={subtaskInput}
+              setSubtaskInput={setSubtaskInput}
+              onAddSubtask={handleAddSubtask}
+              onToggleSubtask={(stId) => toggleSubtask(todo.id, stId)}
+              onDeleteSubtask={(stId) => deleteSubtask(todo.id, stId)}
+              onReorder={(aId, oId) => reorderSubtasks(todo.id, aId, oId)}
+              dragSubId={dragSubId}
+              setDragSubId={setDragSubId}
+            />
+          )}
+
+          {hasMeta && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 text-[13px] font-medium"
+                style={{ backgroundColor: hexToRgba(diff.color, 0.08), color: diff.color }}
+              >
+                <span className="h-1.5 w-1.5" style={{ backgroundColor: diff.color }} />
+                {t(`diff.${todo.difficulty}`, locale)}
+              </span>
+
+              {od > 0 && (
+                <span className="inline-flex items-center gap-1 bg-warning/10 px-2 py-0.5 text-[13px] font-bold text-warning">
+                  <AlertTriangle size={12} />
+                  {t("task.overdue", locale, { n: od })}
+                </span>
+              )}
+
+              {dayIdx !== null && (
+                <span className="inline-flex items-center gap-1 bg-accent/10 px-2 py-0.5 text-[13px] font-medium text-accent">
+                  {t("duration.day_n", locale, { x: dayIdx, n: dur })}
+                  {todo.completedDayKeys.length > 0 && (
+                    <span className="opacity-70">
+                      ({t("duration.done_n", locale, { n: todo.completedDayKeys.length })})
+                    </span>
+                  )}
+                </span>
+              )}
+
+              {time && (
+                <span className="inline-flex items-center gap-1 text-[13px] text-text-2">
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  {time}
+                </span>
+              )}
+
+              {todoTags.map((tg) => (
+                <TagBadge key={tg.id} tag={tg} />
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        {!selectionMode && !mobile && (
+          <div className="flex shrink-0 items-center gap-0.5">
+            <EventButton todoId={todo.id} />
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="mt-0.5 shrink-0 rounded-md p-1.5 text-text-3 opacity-0 transition-all hover:text-danger group-hover:opacity-100"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -462,15 +586,18 @@ function SubtaskRow({
         "group/st flex min-h-[28px] items-center gap-1.5 rounded-md py-1 pr-1 transition-colors hover:bg-surface-2/60",
         isDeleting && "animate-subtask-delete",
         isEntering && "animate-subtask-enter",
+        mobile && "min-h-[36px] py-1.5",
       )}
     >
-      <div
-        {...(dragListeners ?? {})}
-        onClick={(e) => e.stopPropagation()}
-        className="cursor-grab text-text-3 opacity-0 transition-opacity group-hover/st:opacity-40"
-      >
-        <GripVertical size={12} />
-      </div>
+      {!mobile && (
+        <div
+          {...(dragListeners ?? {})}
+          onClick={(e) => e.stopPropagation()}
+          className="cursor-grab text-text-3 opacity-0 transition-opacity group-hover/st:opacity-40"
+        >
+          <GripVertical size={12} />
+        </div>
+      )}
       <button
         type="button"
         onClick={(e) => {
@@ -478,17 +605,19 @@ function SubtaskRow({
           onToggle();
         }}
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+          "flex shrink-0 items-center justify-center rounded border transition-colors",
+          mobile ? "h-5 w-5" : "h-4 w-4",
           st.completed
             ? "border-success bg-success text-white"
             : "border-text-3/50 hover:border-accent",
         )}
       >
-        {st.completed && <Check size={10} strokeWidth={2.5} />}
+        {st.completed && <Check size={mobile ? 12 : 10} strokeWidth={2.5} />}
       </button>
       <span
         className={cn(
-          "min-w-0 flex-1 text-[14px] text-text-2",
+          "min-w-0 flex-1 text-text-2",
+          mobile ? "text-[14px]" : "text-[14px]",
           st.completed && "line-through text-text-3",
         )}
       >
@@ -500,7 +629,12 @@ function SubtaskRow({
           e.stopPropagation();
           if (!isDeleting) onDelete();
         }}
-        className="shrink-0 rounded p-1 text-text-3 opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger group-hover/st:opacity-100"
+        className={cn(
+          "shrink-0 rounded text-text-3 hover:bg-danger/10 hover:text-danger",
+          mobile
+            ? "p-1.5 opacity-60 transition-opacity"
+            : "p-1 opacity-0 transition-opacity group-hover/st:opacity-100",
+        )}
       >
         <Trash2 size={12} />
       </button>
@@ -539,7 +673,7 @@ function SortableSubtaskRow({
         st={st}
         onToggle={onToggle}
         onDelete={onDelete}
-        dragListeners={listeners}
+        dragListeners={mobile ? undefined : listeners}
         isDeleting={isDeleting}
         isEntering={isEntering}
       />
@@ -647,7 +781,10 @@ function SubtaskList({
           </DndContext>
           <form
             onSubmit={onAddSubtask}
-            className="flex items-center gap-2 rounded-md border border-dashed border-border/60 bg-surface-2/40 py-1.5 pl-2 pr-2 transition-colors hover:border-accent/40 hover:bg-surface-2/60"
+            className={cn(
+              "flex items-center gap-2 rounded-md border border-dashed border-border/60 bg-surface-2/40 pl-2 pr-2 transition-colors hover:border-accent/40 hover:bg-surface-2/60",
+              mobile ? "py-2" : "py-1.5",
+            )}
           >
             <ListPlus size={14} className="shrink-0 text-text-3" />
             <input

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { isMobile } from "@/lib/platform";
 import { getTodoHistoryDate } from "@/lib/todo-helpers";
 import { cn, DIFFICULTY_CONFIG, formatTimeSlots, hexToRgba } from "@/lib/utils";
 import { t } from "@/i18n";
+
+const mobile = isMobile();
 import { useTodoStore } from "@/stores/todoStore";
 import { useTagStore } from "@/stores/tagStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -128,24 +131,30 @@ export function HistoryPanel() {
   while (cells.length % 7 !== 0) cells.push(null);
 
   return (
-    <div className="flex flex-col gap-4 px-6 py-4">
+    <div className={cn("flex flex-col gap-4 py-4", mobile ? "px-4" : "px-6")}>
       {/* Calendar */}
       <div className="mx-auto w-full max-w-[340px]">
         <div className="mb-3 flex items-center justify-between">
           <button
             type="button"
             onClick={prevMonth}
-            className="p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+            className={cn(
+              "text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1",
+              mobile ? "p-2.5" : "p-1.5",
+            )}
           >
-            <ChevronLeft size={16} />
+            <ChevronLeft size={mobile ? 20 : 16} />
           </button>
           <span className="text-[15px] font-semibold text-text-1">{monthLabel}</span>
           <button
             type="button"
             onClick={nextMonth}
-            className="p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+            className={cn(
+              "text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1",
+              mobile ? "p-2.5" : "p-1.5",
+            )}
           >
-            <ChevronRight size={16} />
+            <ChevronRight size={mobile ? 20 : 16} />
           </button>
         </div>
 

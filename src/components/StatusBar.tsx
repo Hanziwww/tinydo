@@ -2,6 +2,11 @@ import { useCallback, useMemo, useRef } from "react";
 import { Archive, CheckSquare, ImageDown, Trash2, X } from "lucide-react";
 import { t } from "@/i18n";
 import { isMobile } from "@/lib/platform";
+
+const mobile = isMobile();
+const iconBtnCls = mobile
+  ? "inline-flex h-9 w-9 items-center justify-center text-text-3 transition-colors"
+  : "inline-flex h-7 w-7 items-center justify-center text-text-3 transition-colors";
 import { isTodoCompletedForDate, isTodoVisibleOnBoard } from "@/lib/todo-helpers";
 import {
   cn,
@@ -84,8 +89,10 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
     const name = board === "today" ? "tinydo-today" : "tinydo-tomorrow";
     const dateStr = new Date().toISOString().slice(0, 10);
     try {
-      await exportPoster(posterRef.current, `${name}-${dateStr}.png`);
-      showSuccessNotice(t("notice.poster_saved", locale));
+      const saved = await exportPoster(posterRef.current, `${name}-${dateStr}.png`);
+      if (saved) {
+        showSuccessNotice(t("notice.poster_saved", locale));
+      }
     } catch (err) {
       console.error("Poster export failed:", err);
       showErrorNotice(err);
@@ -98,7 +105,12 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
 
   return (
     <>
-      <div className={cn("flex flex-wrap items-center gap-3 border-t border-border py-2", isMobile() ? "px-4" : "px-6")}>
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-3 border-t border-border py-2",
+          isMobile() ? "px-4 mobile-safe-bottom" : "px-6",
+        )}
+      >
         <span className="min-w-[180px] flex-1 text-[13px] text-text-2">
           {t("status.active", locale, { n: activeN })}
           {doneN > 0 && ` · ${t("status.completed", locale, { n: doneN })}`}
@@ -160,7 +172,7 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
               <button
                 type="button"
                 onClick={batchDeleteSelected}
-                className="inline-flex h-7 w-7 items-center justify-center text-text-3 transition-colors hover:bg-danger/10 hover:text-danger"
+                className={cn(iconBtnCls, "hover:bg-danger/10 hover:text-danger")}
                 title={t("batch.delete", locale)}
               >
                 <Trash2 size={15} />
@@ -168,7 +180,7 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
               <button
                 type="button"
                 onClick={() => setSelectionMode(false)}
-                className="inline-flex h-7 w-7 items-center justify-center text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                className={cn(iconBtnCls, "hover:bg-surface-2 hover:text-text-1")}
                 title={t("batch.exit", locale)}
               >
                 <X size={15} />
@@ -179,7 +191,7 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
               <button
                 type="button"
                 onClick={() => setSelectionMode(true)}
-                className="inline-flex h-7 w-7 items-center justify-center text-text-3 transition-colors hover:bg-accent/10 hover:text-accent"
+                className={cn(iconBtnCls, "hover:bg-accent/10 hover:text-accent")}
                 title={t("batch.enter", locale)}
               >
                 <CheckSquare size={15} />
@@ -187,7 +199,7 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
               <button
                 type="button"
                 onClick={handleExportPoster}
-                className="inline-flex h-7 w-7 items-center justify-center text-text-3 transition-colors hover:bg-accent/10 hover:text-accent"
+                className={cn(iconBtnCls, "hover:bg-accent/10 hover:text-accent")}
                 title={t("action.export_poster", locale)}
               >
                 <ImageDown size={15} />
@@ -198,7 +210,7 @@ export function StatusBar({ board, boardDate, searchQuery }: Props) {
             <button
               type="button"
               onClick={handleArchive}
-              className="inline-flex h-7 w-7 items-center justify-center text-text-3 transition-colors hover:bg-accent/10 hover:text-accent"
+              className={cn(iconBtnCls, "hover:bg-accent/10 hover:text-accent")}
               title={t("action.archive_completed", locale)}
             >
               <Archive size={15} />

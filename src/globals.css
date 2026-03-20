@@ -65,6 +65,26 @@ body {
   color: var(--t1);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+body.mobile-body ::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+body.mobile-body button,
+body.mobile-body [role="button"] {
+  touch-action: manipulation;
+}
+body.mobile-body input:focus,
+body.mobile-body textarea:focus,
+body.mobile-body select:focus {
+  scroll-margin-bottom: 200px;
+}
+body.mobile-body * {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 
 body.mini-transparent,
@@ -253,10 +273,10 @@ textarea {
   animation: ftIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .animate-check-pop {
-  animation: checkPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: checkPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .animate-row-complete {
-  animation: rowComplete 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rowComplete 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .animate-row-uncomplete {
   animation: rowUncomplete 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -332,7 +352,7 @@ textarea {
   overflow: hidden;
 }
 .animate-row-enter {
-  animation: rowEnter 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: rowEnter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .animate-subtask-enter {
   animation: subtaskEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -346,7 +366,7 @@ textarea {
   padding-top: var(--safe-area-top);
 }
 .mobile-safe-bottom {
-  padding-bottom: var(--safe-area-bottom);
+  padding-bottom: max(var(--safe-area-bottom), 12px);
 }
 
 @keyframes sheetUp {
