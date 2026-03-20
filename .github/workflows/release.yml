@@ -101,7 +101,7 @@ jobs:
       - name: Build Android APK
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: npx tauri android build --target aarch64 -- --apk
+        run: npx tauri android build --target aarch64
 
       - name: Find and rename APK
         id: apk
