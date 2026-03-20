@@ -150,7 +150,7 @@ export function TodoDetail() {
       return;
     }
     container.style.scrollPaddingBottom = "160px";
-    container.style.paddingBottom = "calc(max(var(--safe-area-bottom), 12px) + 120px)";
+    container.style.paddingBottom = "calc(max(var(--safe-area-bottom), 4px) + 120px)";
     window.setTimeout(() => {
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, 120);
@@ -169,7 +169,7 @@ export function TodoDetail() {
         if (container.contains(active)) return;
       }
       container.style.scrollPaddingBottom = "96px";
-      container.style.paddingBottom = "max(var(--safe-area-bottom), 12px)";
+      container.style.paddingBottom = "max(var(--safe-area-bottom), 4px)";
     }, 80);
   };
 
@@ -190,7 +190,7 @@ export function TodoDetail() {
         className="flex-1 space-y-5 overflow-y-auto p-5"
         style={{
           scrollPaddingBottom: mobile ? 96 : undefined,
-          paddingBottom: mobile ? "max(var(--safe-area-bottom), 12px)" : undefined,
+          paddingBottom: mobile ? "max(var(--safe-area-bottom), 4px)" : undefined,
         }}
         onFocusCapture={handleScrollFocus}
         onBlurCapture={handleScrollBlur}

@@ -155,6 +155,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     if (anim) return;
     const currentDone = isTodoCompletedForDate(todo, refDate);
     const dir = currentDone ? "uncompleting" : "completing";
+    if (mobile) navigator.vibrate(dir === "completing" ? 20 : 10);
     setAnim(dir);
     timerRef.current = setTimeout(
       () => {
@@ -192,6 +193,7 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
   const handleTitleLongPress = () => {
     if (selectionMode) return;
     longPressRef.current = setTimeout(() => {
+      navigator.vibrate(25);
       setEditing(true);
     }, 500);
   };
@@ -228,24 +230,30 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
     if (!swipeStartRef.current) return;
     const dx = e.touches[0].clientX - swipeStartRef.current.x;
     const dy = e.touches[0].clientY - swipeStartRef.current.y;
-    if (!swipeStartRef.current.horizontal && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+    if (
+      !swipeStartRef.current.horizontal &&
+      Math.abs(dx) > 20 &&
+      Math.abs(dx) > Math.abs(dy) * 1.5
+    ) {
       swipeStartRef.current.horizontal = true;
       swipeConsumedRef.current = true;
       setSwiping(true);
     }
     if (swipeStartRef.current.horizontal) {
       e.stopPropagation();
-      const nextX = Math.max(-100, Math.min(100, dx));
+      const nextX = Math.max(-140, Math.min(140, dx));
       swipeXRef.current = nextX;
       setSwipeX(nextX);
     }
   };
   const onSwipeTouchEnd = () => {
     const finalX = swipeXRef.current;
-    if (finalX < -70) {
+    if (finalX < -100) {
+      navigator.vibrate(15);
       setDeleting(true);
       deleteTimerRef.current = setTimeout(() => remove(todo.id), 350);
-    } else if (finalX > 70) {
+    } else if (finalX > 100) {
+      navigator.vibrate(10);
       setEventViewTodoId(todo.id);
     }
     swipeXRef.current = 0;
@@ -270,13 +278,13 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
         <>
           <div
             className="absolute inset-y-0 right-0 flex w-[100px] items-center justify-center bg-danger text-white"
-            style={{ opacity: swipeX < -20 ? Math.min(1, Math.abs(swipeX) / 70) : 0 }}
+            style={{ opacity: swipeX < -35 ? Math.min(1, Math.abs(swipeX) / 100) : 0 }}
           >
             <Trash2 size={20} />
           </div>
           <div
             className="absolute inset-y-0 left-0 flex w-[100px] items-center justify-center bg-accent text-white"
-            style={{ opacity: swipeX > 20 ? Math.min(1, swipeX / 70) : 0 }}
+            style={{ opacity: swipeX > 35 ? Math.min(1, swipeX / 100) : 0 }}
           >
             <ScrollText size={20} />
           </div>
@@ -294,14 +302,14 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
           mobile
             ? {
                 transform: `translateX(${swipeX}px)`,
-                transition: swiping ? "none" : "transform 0.2s ease-out",
+                transition: swiping ? "none" : "transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)",
               }
             : undefined
         }
         className={cn(
           "relative border-b border-border/60 transition-all duration-300 bg-surface-1",
           mobile
-            ? "grid grid-cols-[20px_minmax(0,1fr)] items-start gap-x-3 py-3.5 pl-4 pr-4"
+            ? "grid grid-cols-[20px_minmax(0,1fr)] items-start gap-x-3 py-3.5 pl-7 pr-4"
             : "group grid grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-3 py-2.5 pl-10 pr-5",
           od > 0 ? "bg-warning/[0.04]" : "hover:bg-surface-2/40",
           selectionMode && isSelected && "bg-accent/5 ring-1 ring-accent/40",
@@ -347,9 +355,14 @@ export function TodoItem({ todo, dragListeners, boardDate, index }: Props) {
           </div>
         )}
 
-        {!mobile && index !== undefined && !todo.completed && (
+        {index !== undefined && !todo.completed && !selectionMode && (
           <span
-            className="absolute left-5 top-1/2 -translate-y-1/2 text-[13px] font-medium tabular-nums transition-opacity group-hover:opacity-0"
+            className={cn(
+              "absolute top-1/2 -translate-y-1/2 font-medium tabular-nums",
+              mobile
+                ? "left-2 text-[13px]"
+                : "left-5 text-[13px] transition-opacity group-hover:opacity-0",
+            )}
             style={{
               color:
                 index <= 2

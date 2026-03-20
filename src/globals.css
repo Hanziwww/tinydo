@@ -366,7 +366,7 @@ textarea {
   padding-top: var(--safe-area-top);
 }
 .mobile-safe-bottom {
-  padding-bottom: max(var(--safe-area-bottom), 12px);
+  padding-bottom: max(var(--safe-area-bottom), 4px);
 }
 
 @keyframes sheetUp {

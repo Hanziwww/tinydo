@@ -67,6 +67,50 @@ function SheetHandle({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ScrollEdgeWrapper({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [atTop, setAtTop] = useState(true);
+  const [atBottom, setAtBottom] = useState(true);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      setAtTop(scrollTop <= 2);
+      setAtBottom(scrollTop + clientHeight >= scrollHeight - 2);
+    };
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", check);
+      ro.disconnect();
+    };
+  }, []);
+
+  return (
+    <div className="relative min-h-0 flex-1">
+      <div ref={ref} className={className}>
+        {children}
+      </div>
+      {!atTop && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-surface-1/80 to-transparent" />
+      )}
+      {!atBottom && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface-1/80 to-transparent" />
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [showTags, setShowTags] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -115,7 +159,18 @@ function App() {
       .hydrate()
       .then(() => {
         if (useSyncStore.getState().configured) {
-          void useSyncStore.getState().triggerSync();
+          void useSyncStore
+            .getState()
+            .triggerSync()
+            .then((result) => {
+              if (result && (result.pulled > 0 || result.pushed > 0)) {
+                const loc = useSettingsStore.getState().locale;
+                const parts: string[] = [];
+                if (result.pulled > 0) parts.push(t("sync.pulled", loc, { n: result.pulled }));
+                if (result.pushed > 0) parts.push(t("sync.pushed", loc, { n: result.pushed }));
+                showInfoNotice(parts.join("，"));
+              }
+            });
         }
       });
     if (mobile) {
@@ -123,6 +178,13 @@ function App() {
       if (ss.timelineStartHour === 0 && ss.timelineEndHour === 24) {
         ss.setTimelineRange(7, 23);
       }
+      void import("@tauri-apps/plugin-notification").then(
+        ({ isPermissionGranted, requestPermission }) => {
+          void isPermissionGranted().then((granted) => {
+            if (!granted) void requestPermission();
+          });
+        },
+      );
     }
     const timer = setTimeout(() => setSplashDone(true), 1500);
     return () => {
@@ -195,7 +257,7 @@ function App() {
       return;
     }
     container.style.scrollPaddingBottom = "160px";
-    container.style.paddingBottom = "calc(max(var(--safe-area-bottom), 12px) + 120px)";
+    container.style.paddingBottom = "calc(max(var(--safe-area-bottom), 4px) + 120px)";
     window.setTimeout(() => {
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, 120);
@@ -214,7 +276,7 @@ function App() {
         if (container.contains(active)) return;
       }
       container.style.scrollPaddingBottom = "96px";
-      container.style.paddingBottom = "max(var(--safe-area-bottom), 12px)";
+      container.style.paddingBottom = "max(var(--safe-area-bottom), 4px)";
     }, 80);
   }, []);
 
@@ -657,12 +719,28 @@ function App() {
                           </FadeTransition>
                         ) : (
                           <>
-                            <FadeTransition
-                              transitionKey={`${board}-${viewMode}`}
-                              className="min-h-0 flex-1 overflow-y-auto"
-                            >
-                              <TodoList board={board} boardDate={bDate} searchQuery={searchQuery} />
-                            </FadeTransition>
+                            {mobile ? (
+                              <ScrollEdgeWrapper className="h-full overflow-y-auto">
+                                <FadeTransition transitionKey={`${board}-${viewMode}`}>
+                                  <TodoList
+                                    board={board}
+                                    boardDate={bDate}
+                                    searchQuery={searchQuery}
+                                  />
+                                </FadeTransition>
+                              </ScrollEdgeWrapper>
+                            ) : (
+                              <FadeTransition
+                                transitionKey={`${board}-${viewMode}`}
+                                className="min-h-0 flex-1 overflow-y-auto"
+                              >
+                                <TodoList
+                                  board={board}
+                                  boardDate={bDate}
+                                  searchQuery={searchQuery}
+                                />
+                              </FadeTransition>
+                            )}
                             {showTimeline && (
                               <div
                                 className={cn(
@@ -792,7 +870,7 @@ function App() {
                               className="flex-1 overflow-y-auto p-5"
                               style={{
                                 scrollPaddingBottom: 96,
-                                paddingBottom: "max(var(--safe-area-bottom), 12px)",
+                                paddingBottom: "max(var(--safe-area-bottom), 4px)",
                               }}
                               onFocusCapture={handleMobileScrollableFocus}
                               onBlurCapture={handleMobileScrollableBlur}
@@ -873,7 +951,7 @@ function App() {
                                 className="flex-1 overflow-y-auto p-5"
                                 style={{
                                   scrollPaddingBottom: 96,
-                                  paddingBottom: "max(var(--safe-area-bottom), 12px)",
+                                  paddingBottom: "max(var(--safe-area-bottom), 4px)",
                                 }}
                                 onFocusCapture={handleMobileScrollableFocus}
                                 onBlurCapture={handleMobileScrollableBlur}

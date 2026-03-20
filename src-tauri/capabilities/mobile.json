@@ -7,6 +7,8 @@
   "permissions": [
     "core:default",
     "notification:default",
+    "notification:allow-request-permission",
+    "notification:allow-is-permission-granted",
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "dialog:allow-open",

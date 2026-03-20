@@ -178,7 +178,7 @@ export function TodoList({ board, boardDate, searchQuery }: Props) {
       </DndContext>
 
       {completed.length > 0 && active.length > 0 && (
-        <div className="flex items-center gap-3 px-6 py-2">
+        <div className={cn("flex items-center gap-3 py-2", mobile ? "px-4" : "px-6")}>
           <div className="h-px flex-1 bg-border/50" />
           <span className="text-[12px] text-text-3">
             {t("todo.completed_sep", locale, { n: completed.length })}

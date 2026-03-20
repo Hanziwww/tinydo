@@ -53,6 +53,25 @@ function formatTimestamp(ts: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 }
 
+function formatTimeSlotValue(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const obj = value as Record<string, unknown>;
+  const start = obj.start as string | undefined;
+  const end = obj.end as string | undefined | null;
+  if (!start) return null;
+  return end ? `${start} - ${end}` : start;
+}
+
+function formatReminderValue(value: unknown, locale: Locale): string | null {
+  if (value === null || value === undefined) return t("detail.reminder_off", locale);
+  const mins = Number(value);
+  if (isNaN(mins)) return typeof value === "string" ? value : `${Number(value)}`;
+  if (mins === 0) return t("detail.reminder_at_time", locale);
+  if (mins >= 1440) return t("detail.reminder_day_before", locale);
+  if (mins >= 60 && mins % 60 === 0) return t("detail.reminder_hours", locale, { n: mins / 60 });
+  return t("detail.reminder_mins", locale, { n: mins });
+}
+
 function formatEventValue(
   value: unknown,
   eventType: EventType,
@@ -78,7 +97,46 @@ function formatEventValue(
     if (relLabel && targetLabel) return `${relLabel}: ${targetLabel}`;
     if (relLabel) return relLabel;
     if (targetLabel) return targetLabel;
-    return JSON.stringify(value);
+    return null;
+  }
+
+  if (
+    eventType === "timeSlotChanged" ||
+    eventType === "timeSlotAdded" ||
+    eventType === "timeSlotRemoved"
+  ) {
+    const formatted = formatTimeSlotValue(value);
+    if (formatted) return formatted;
+    if (typeof value === "string") return value;
+    return null;
+  }
+
+  if (eventType === "reminderChanged") {
+    return formatReminderValue(value, locale);
+  }
+
+  if (eventType === "difficultyChanged") {
+    const n = Number(value);
+    if (!isNaN(n) && n >= 1 && n <= 4) return t(`diff.${n}`, locale);
+    return typeof value === "string" ? value : `${Number(value)}`;
+  }
+
+  if (eventType === "durationChanged") {
+    const n = Number(value);
+    if (!isNaN(n)) return locale === "zh" ? `${n} 天` : `${n} day${n > 1 ? "s" : ""}`;
+    return typeof value === "string" ? value : `${Number(value)}`;
+  }
+
+  if (eventType === "subtaskToggled") {
+    if (typeof value === "boolean") {
+      return value
+        ? locale === "zh"
+          ? "已完成"
+          : "Done"
+        : locale === "zh"
+          ? "未完成"
+          : "Not done";
+    }
   }
 
   if (
@@ -92,11 +150,19 @@ function formatEventValue(
     if (typeof obj.title === "string") return obj.title;
   }
 
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return `${value}`;
+
   if (typeof value === "object") {
-    return JSON.stringify(value);
+    const obj = value as Record<string, unknown>;
+    const meaningful = Object.entries(obj)
+      .filter(([, v]) => v !== null && v !== undefined)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+    return meaningful || null;
   }
 
-  return `${value as string | number | boolean}`;
+  return null;
 }
 
 function ValueDisplay({ value, label }: { value: string | null; label: string }) {
