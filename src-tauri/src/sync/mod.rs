@@ -403,7 +403,7 @@ pub async fn sync_pull(app: AppHandle) -> Result<SyncResult, AppError> {
     let _ = app.emit("sync-completed", &result);
 
     if pulled > 0 {
-        reminders::reschedule_all(&app);
+        reminders::schedule_reschedule(app.clone());
     }
 
     Ok(result)
@@ -426,7 +426,7 @@ pub async fn sync_full(app: AppHandle) -> Result<SyncResult, AppError> {
     let result = sync_pull(app.clone()).await?;
 
     if snapshot_applied && result.pulled == 0 {
-        reminders::reschedule_all(&app);
+        reminders::schedule_reschedule(app.clone());
     }
 
     if result.conflicts.is_empty() && (snapshot_applied || result.pulled > 0 || result.pushed > 0) {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { t } from "@/i18n";
 import { isDesktop } from "@/lib/platform";
+import { getAutostartEnabled, setAutostartEnabled } from "@/lib/autostart";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { exportAllData, importAllData } from "@/lib/export";
 import { parseError } from "@/lib/backend";
@@ -15,29 +16,36 @@ export function SettingsPanel() {
     details?: string[];
   } | null>(null);
   const [autostart, setAutostart] = useState(false);
+  const [autostartPending, setAutostartPending] = useState(false);
 
   useEffect(() => {
     if (!isDesktop()) return;
-    void import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
-      isEnabled()
-        .then(setAutostart)
-        .catch(() => setAutostart(false));
-    });
+    let cancelled = false;
+
+    void getAutostartEnabled()
+      .then((enabled) => {
+        if (!cancelled) setAutostart(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setAutostart(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const toggleAutostart = async () => {
-    if (!isDesktop()) return;
+    if (!isDesktop() || autostartPending) return;
+    setAutostartPending(true);
     try {
-      const { enable, disable } = await import("@tauri-apps/plugin-autostart");
-      if (autostart) {
-        await disable();
-        setAutostart(false);
-      } else {
-        await enable();
-        setAutostart(true);
-      }
+      const next = await setAutostartEnabled(!autostart);
+      setAutostart(next);
     } catch (e) {
       console.error("Failed to toggle autostart:", e);
+      showErrorNotice(parseError(e));
+    } finally {
+      setAutostartPending(false);
     }
   };
 
@@ -333,10 +341,12 @@ export function SettingsPanel() {
               <button
                 type="button"
                 role="switch"
+                disabled={autostartPending}
                 aria-checked={autostart}
                 onClick={() => void toggleAutostart()}
                 className={cn(
                   "relative inline-flex h-7 w-12 items-center border transition-colors",
+                  autostartPending && "cursor-not-allowed opacity-60",
                   autostart ? "border-accent bg-accent" : "border-border bg-surface-2",
                 )}
               >

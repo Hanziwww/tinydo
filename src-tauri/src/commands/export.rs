@@ -619,7 +619,7 @@ pub fn import_data(
         .map_err(|e| AppError::custom(e.to_string()))?;
     let result = import_json_to_db(&conn, &data).map_err(into_import_failure)?;
     drop(conn);
-    reminders::reschedule_all(&app);
+    reminders::schedule_reschedule(app);
 
     log::info!(
         "Data imported from {}: {} todos, {} archived, {} tags, {} tag groups, settings={}",

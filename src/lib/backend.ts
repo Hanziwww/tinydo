@@ -116,6 +116,14 @@ export function saveSettings(settings: BackendSettings): Promise<void> {
   return invoke("save_settings", { settings });
 }
 
+export function getAutostartEnabled(): Promise<boolean> {
+  return invoke<boolean>("get_autostart_enabled");
+}
+
+export function setAutostartEnabled(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>("set_autostart_enabled", { enabled });
+}
+
 // ── Migration ──────────────────────────────────────────────────────────
 
 export function checkNeedsMigration(): Promise<boolean> {

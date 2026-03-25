@@ -15,7 +15,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter,
 };
-#[cfg(desktop)]
+#[cfg(all(desktop, not(target_os = "windows")))]
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -43,12 +43,15 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        builder = builder
-            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-            .plugin(tauri_plugin_autostart::init(
-                MacosLauncher::LaunchAgent,
-                Some(vec!["--autostarted"]),
-            ));
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
+
+    #[cfg(all(desktop, not(target_os = "windows")))]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--autostarted"]),
+        ));
     }
 
     builder
@@ -64,6 +67,8 @@ pub fn run() {
             commands::tags::get_tag_groups,
             commands::tags::save_tag_group,
             commands::tags::delete_tag_group,
+            commands::autostart::get_autostart_enabled,
+            commands::autostart::set_autostart_enabled,
             commands::settings::get_all_settings,
             commands::settings::save_settings,
             commands::settings::check_needs_migration,
@@ -97,6 +102,9 @@ pub fn run() {
             let conn = db::init_db(&db_path)?;
             app.manage(DbState(Mutex::new(conn)));
             app.manage(ReminderState::new());
+
+            #[cfg(target_os = "windows")]
+            commands::autostart::heal_windows_autostart_if_needed(&app.handle());
 
             #[cfg(desktop)]
             {
@@ -135,9 +143,7 @@ pub fn run() {
             }
 
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                reminders::reschedule_all(&handle);
-            });
+            reminders::schedule_reschedule(handle);
 
             Ok(())
         })

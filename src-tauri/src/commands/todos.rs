@@ -32,7 +32,7 @@ pub fn save_todo(
     let data = serde_json::to_string(&todo).ok();
     let _ = record_local_change(&conn, entity_type, &todo.id, "upsert", data.as_deref());
     drop(conn);
-    reminders::reschedule_all(&app);
+    reminders::schedule_reschedule(app);
     Ok(())
 }
 
@@ -58,7 +58,7 @@ pub fn save_todos(
         let _ = record_local_change(&conn, entity_type, &todo.id, "upsert", data.as_deref());
     }
     drop(conn);
-    reminders::reschedule_all(&app);
+    reminders::schedule_reschedule(app);
     Ok(())
 }
 
@@ -72,7 +72,7 @@ pub fn delete_todo(app: AppHandle, state: State<'_, DbState>, id: String) -> Res
     db::delete_todo(&conn, &id)?;
     let _ = record_local_change(&conn, "todo", &id, "delete", None);
     drop(conn);
-    reminders::reschedule_all(&app);
+    reminders::schedule_reschedule(app);
     Ok(())
 }
 
@@ -99,6 +99,6 @@ pub fn archive_todos(
         let _ = record_local_change(&conn, "archived_todo", id, "upsert", todo_data.as_deref());
     }
     drop(conn);
-    reminders::reschedule_all(&app);
+    reminders::schedule_reschedule(app);
     Ok(())
 }

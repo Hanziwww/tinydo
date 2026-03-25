@@ -1,3 +1,4 @@
+pub mod autostart;
 pub mod events;
 pub mod export;
 pub mod settings;

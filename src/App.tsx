@@ -153,6 +153,7 @@ function App() {
 
   useEffect(() => {
     if (!hydrated) return;
+    useTodoStore.getState().endOfDay(getTodayDateKey());
     void usePredictStore.getState().refreshPredictions();
     void useSyncStore
       .getState()
@@ -368,7 +369,7 @@ function App() {
     return () => cleanup?.();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable
 
-  const splitOverdueSubtasks = useTodoStore((s) => s.splitOverdueSubtasks);
+  const endOfDay = useTodoStore((s) => s.endOfDay);
   const prevTodayRef = useRef(todayK);
   useEffect(() => {
     const id = setInterval(() => {
@@ -377,11 +378,11 @@ function App() {
       const nextK = getTodayDateKey(next);
       if (prevTodayRef.current !== nextK) {
         prevTodayRef.current = nextK;
-        splitOverdueSubtasks(nextK);
+        endOfDay(nextK);
       }
     }, 30_000);
     return () => clearInterval(id);
-  }, [splitOverdueSubtasks]);
+  }, [endOfDay]);
 
   const miniOnTop = useSettingsStore((s) => s.miniAlwaysOnTop);
   const setFullModeRect = useSettingsStore((s) => s.setFullModeRect);

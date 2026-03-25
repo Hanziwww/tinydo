@@ -36,3 +36,6 @@ sha2 = "0.10"
 rand = "0.8"
 hex = "0.4"
 hostname = "0.4"
+
+[target."cfg(windows)".dependencies]
+winreg = "0.56.0"

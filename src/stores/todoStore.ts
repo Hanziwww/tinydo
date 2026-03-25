@@ -59,7 +59,7 @@ interface TodoState {
   updateTimeSlot: (todoId: string, slotId: string, updates: Partial<Omit<TimeSlot, "id">>) => void;
   addRelation: (todoId: string, targetTaskId: string, relationType: TaskRelationType) => void;
   deleteRelation: (todoId: string, relationId: string) => void;
-  splitOverdueSubtasks: (todayKey: string) => void;
+  endOfDay: (todayKey: string) => void;
   importTodos: (incoming: Todo[]) => number;
   importArchivedTodos: (incoming: Todo[]) => number;
 }
@@ -941,22 +941,21 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       const endDate = shiftDateKey(todo.targetDate, todo.durationDays - 1);
       return todo.targetDate <= boardDate && endDate >= boardDate;
     });
+    const dailySnapshotSourceIds = new Set<string>();
     const dailySnapshots = previous.todos.flatMap((todo) => {
       if (todo.durationDays <= 1 || todo.completed) return [];
       if (!todo.completedDayKeys.includes(boardDate) || todo.archivedDayKeys.includes(boardDate))
         return [];
       const snapshotKey = `${todo.id}:${boardDate}`;
+      dailySnapshotSourceIds.add(todo.id);
       if (dailySnapshotKeys.has(snapshotKey)) return [];
       return [createHistoryTodo(todo, boardDate, "dailyProgress", nanoid())];
     });
 
-    if (fullArchives.length === 0 && dailySnapshots.length === 0) return;
+    if (fullArchives.length === 0 && dailySnapshotSourceIds.size === 0) return;
     for (const fa of fullArchives) recordEvent(fa.id, "archived");
 
     const fullArchiveIds = new Set(fullArchives.map((todo) => todo.id));
-    const dailySnapshotSourceIds = new Set(
-      dailySnapshots.map((todo) => todo.historySourceTodoId ?? todo.id),
-    );
 
     set((s) => ({
       todos: s.todos
@@ -965,7 +964,7 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
           const withArchivedDay = dailySnapshotSourceIds.has(todo.id)
             ? withTodoDefaults({
                 ...todo,
-                archivedDayKeys: [...todo.archivedDayKeys, boardDate],
+                archivedDayKeys: Array.from(new Set([...todo.archivedDayKeys, boardDate])),
               })
             : todo;
           return Array.from(fullArchiveIds).reduce(
@@ -996,9 +995,10 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
       ...fullArchives.map((todo) => createHistoryTodo(todo, boardDate, "completed")),
       ...dailySnapshots,
     ];
+    const archivedCount = fullArchives.length + dailySnapshotSourceIds.size;
     const locale = getLocale();
     showUndoNotice(
-      t("notice.archived_items", locale, { n: archivedToSave.length }),
+      t("notice.archived_items", locale, { n: archivedCount }),
       t("notice.undo", locale),
       () => restoreTodoSnapshot(previous),
     );
@@ -1295,59 +1295,157 @@ export const useTodoStore = create<TodoState>()((set, get) => ({
     return count;
   },
 
-  splitOverdueSubtasks: (todayKey) => {
-    const previousTodos = get().todos;
-    const yesterdayKey = shiftDateKey(todayKey, -1);
+  endOfDay: (todayKey) => {
+    const previous = {
+      todos: get().todos,
+      archivedTodos: get().archivedTodos,
+    };
+
+    const existingSnapshotKeys = new Set(
+      previous.archivedTodos
+        .filter((todo) => todo.historyKind === "dailyProgress")
+        .map(
+          (todo) => `${todo.historySourceTodoId ?? todo.id}:${todo.historyDate ?? todo.targetDate}`,
+        ),
+    );
+
+    const newArchived: Todo[] = [];
+    const carryForwardIds: string[] = [];
+    const removedIds: string[] = [];
+
     set((s) => {
-      const next: Todo[] = [];
+      const nextTodos: Todo[] = [];
+
       for (const td of s.todos) {
-        if (td.targetDate !== yesterdayKey) {
-          next.push(td);
+        const endDate = shiftDateKey(td.targetDate, Math.max(0, td.durationDays - 1));
+        const isPast = endDate < todayKey;
+
+        if (!isPast) {
+          if (td.durationDays > 1 && td.targetDate < todayKey) {
+            let updated = td;
+            for (const dayKey of td.completedDayKeys) {
+              if (dayKey >= todayKey) continue;
+              if (updated.archivedDayKeys.includes(dayKey)) continue;
+              const snapshotKey = `${td.id}:${dayKey}`;
+              if (!existingSnapshotKeys.has(snapshotKey)) {
+                newArchived.push(createHistoryTodo(td, dayKey, "dailyProgress", nanoid()));
+              }
+              updated = withTodoDefaults({
+                ...updated,
+                archivedDayKeys: [...updated.archivedDayKeys, dayKey],
+              });
+            }
+            nextTodos.push(updated);
+          } else {
+            nextTodos.push(td);
+          }
           continue;
         }
-        if (td.durationDays > 1) {
-          next.push(td);
-          continue;
-        }
-        const subs = td.subtasks;
-        if (subs.length === 0) {
-          next.push(td);
-          continue;
-        }
-        const done = subs.filter((st) => st.completed);
-        const pending = subs.filter((st) => !st.completed);
-        if (done.length > 0) {
-          next.push(
-            withTodoDefaults({
-              ...td,
-              id: nanoid(),
-              title: td.title,
-              completed: true,
-              subtasks: done,
-              targetDate: yesterdayKey,
-              completedDayKeys: td.completedDayKeys,
-              outgoingRelations: [],
-            }),
+
+        // --- past completed tasks (single-day or multi-day): archive ---
+        if (td.completed) {
+          recordEvent(td.id, "archived");
+          newArchived.push(
+            createHistoryTodo(td, td.durationDays > 1 ? endDate : td.targetDate, "completed"),
           );
+          removedIds.push(td.id);
+          continue;
         }
-        if (pending.length > 0) {
-          next.push(
+
+        // --- past multi-day incomplete tasks: snapshot completed days, carry forward ---
+        if (td.durationDays > 1) {
+          for (const dayKey of td.completedDayKeys) {
+            if (td.archivedDayKeys.includes(dayKey)) continue;
+            const snapshotKey = `${td.id}:${dayKey}`;
+            if (existingSnapshotKeys.has(snapshotKey)) continue;
+            newArchived.push(createHistoryTodo(td, dayKey, "dailyProgress", nanoid()));
+          }
+          recordEvent(td.id, "dateChanged", "targetDate", td.targetDate, todayKey);
+          carryForwardIds.push(td.id);
+          nextTodos.push(
             withTodoDefaults({
               ...td,
               targetDate: todayKey,
               completed: false,
-              subtasks: pending,
-              completedDayKeys: td.completedDayKeys,
+              completedDayKeys: [],
+              archivedDayKeys: [],
+              durationDays: 1,
             }),
           );
-        } else if (done.length === 0) {
-          next.push(withTodoDefaults({ ...td, targetDate: todayKey }));
+          continue;
         }
+
+        // --- past single-day incomplete with subtasks: split ---
+        if (td.subtasks.length > 0) {
+          const done = td.subtasks.filter((st) => st.completed);
+          const pending = td.subtasks.filter((st) => !st.completed);
+          if (done.length > 0) {
+            const splitDone = withTodoDefaults({
+              ...td,
+              id: nanoid(),
+              completed: true,
+              subtasks: done,
+              targetDate: td.targetDate,
+              outgoingRelations: [],
+            });
+            recordEvent(splitDone.id, "archived");
+            newArchived.push(createHistoryTodo(splitDone, td.targetDate, "completed"));
+          }
+          if (pending.length > 0) {
+            recordEvent(td.id, "dateChanged", "targetDate", td.targetDate, todayKey);
+            carryForwardIds.push(td.id);
+            nextTodos.push(
+              withTodoDefaults({
+                ...td,
+                targetDate: todayKey,
+                completed: false,
+                subtasks: pending,
+              }),
+            );
+          } else {
+            removedIds.push(td.id);
+          }
+          continue;
+        }
+
+        // --- past single-day incomplete without subtasks: carry forward ---
+        recordEvent(td.id, "dateChanged", "targetDate", td.targetDate, todayKey);
+        carryForwardIds.push(td.id);
+        nextTodos.push(withTodoDefaults({ ...td, targetDate: todayKey }));
       }
-      return { todos: next };
+
+      const archivedIds = new Set(newArchived.map((a) => a.historySourceTodoId ?? a.id));
+      const cleanedTodos = nextTodos.map((todo) =>
+        Array.from(archivedIds).reduce(
+          (current, archivedId) => stripRelationsToTarget(current, archivedId),
+          todo,
+        ),
+      );
+
+      return {
+        todos: cleanedTodos,
+        archivedTodos: [...s.archivedTodos, ...newArchived],
+      };
     });
-    void persistTodos(get().todos).catch((error: unknown) => {
-      rollbackTodoState({ todos: previousTodos }, error);
-    });
+
+    if (newArchived.length === 0 && carryForwardIds.length === 0 && removedIds.length === 0) return;
+
+    const nextState = get();
+    const changedTodos = nextState.todos.filter(
+      (todo) =>
+        carryForwardIds.includes(todo.id) ||
+        previous.todos.some(
+          (prev) =>
+            prev.id === todo.id &&
+            (prev.archivedDayKeys.length !== todo.archivedDayKeys.length ||
+              prev.targetDate !== todo.targetDate),
+        ),
+    );
+
+    void Promise.all([
+      persistTodoBatch(changedTodos, false),
+      persistTodoBatch(newArchived, true),
+      ...removedIds.map((id) => persistDeleteTodo(id)),
+    ]).catch((error: unknown) => rollbackTodoState(previous, error));
   },
 }));

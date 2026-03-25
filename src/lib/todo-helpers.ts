@@ -39,10 +39,10 @@ export function getTodoEndDate(todo: Pick<Todo, "targetDate" | "durationDays">):
 }
 
 export function isTodoArchivedForDate(
-  todo: Pick<Todo, "durationDays" | "archivedDayKeys">,
+  todo: Pick<Todo, "archivedDayKeys">,
   dateKey: string,
 ): boolean {
-  return todo.durationDays > 1 && todo.archivedDayKeys.includes(dateKey);
+  return todo.archivedDayKeys.includes(dateKey);
 }
 
 export function isTodoCompletedForDate(

@@ -136,6 +136,15 @@ pub fn reschedule_all(app: &AppHandle) {
     log::info!("Scheduled {} reminders", handles.len());
 }
 
+pub fn schedule_reschedule(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reschedule_all(&app))).is_err()
+        {
+            log::error!("Reminder reschedule panicked");
+        }
+    });
+}
+
 fn send_notification(app: &AppHandle, title: &str, mins_before: i32) {
     #[cfg(not(test))]
     {

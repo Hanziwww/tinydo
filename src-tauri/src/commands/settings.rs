@@ -92,6 +92,6 @@ pub fn migrate_from_legacy(
         .map_err(|e| AppError::custom(e.to_string()))?;
     db::migrate_from_legacy(&conn, &data)?;
     drop(conn);
-    reminders::reschedule_all(&app);
+    reminders::schedule_reschedule(app);
     Ok(())
 }
